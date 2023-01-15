@@ -1,22 +1,28 @@
 import numpy as np
 from numpy import linalg
 
-def householder(x):
+def householder(x, sign=-1):
     sigma = np.linalg.norm(x)
-    sign = -1
     e = np.zeros_like(x)
     e[0] = 1
     u = x - sign * sigma * e
     return u / np.linalg.norm(u)
 
 def qr(A):
-    n = len(A)
-    Q,H = np.identity(n), np.identity(n)
+    if not isinstance(A, np.ndarray):
+        A = np.array(A)
+    m,n = A.shape
+    Q,H = np.identity(m), np.identity(m)
     
-    for i in range(n - 1):
+    for i in range(n):
+        # skip last transformation if is sqare matrix
+        if m == n and i == n - 1:
+            break
         Ai = A[i:, i:]
-        v = householder(Ai[:, 0])
-        H_hat = np.identity(n - i) - 2 * np.outer(v, v)
+        # to match numpy implementation
+        sign = 1 if i == n - 1 else -1
+        v = householder(Ai[:, 0], sign)
+        H_hat = np.identity(m - i) - 2 * np.outer(v, v)
         H = np.pad(H_hat, (i, 0), 'constant')
         H[np.diag_indices(i)] = 1
         Q = Q.dot(H)
@@ -37,6 +43,13 @@ def testQR():
 
     tests = [
         [
+            [1,2,3],
+            [4,5,6],
+            [7,8,7],
+            [4,2,3],
+            [4,2,2]
+        ],
+        [
             [0, 3, 1],
             [0, 4, -2],
             [2, 1, 1]
@@ -50,7 +63,7 @@ def testQR():
 
     for A in tests:
         Q, R = qr(np.array(A))
-        _Q, _R = linalg.qr(A)
+        _Q, _R = linalg.qr(A, mode='complete')
         assert np.allclose(
             Q, _Q), f"Q should be :\n{np.array(_Q)},\n got:\n {Q}"
         assert np.allclose(
