@@ -1,8 +1,13 @@
 import numpy as np
 from numpy import linalg
+import time
 
-def householder(x, sign=-1):
+
+np.set_printoptions(suppress = True)
+
+def householder(x):
     sigma = np.linalg.norm(x)
+    sign = -1 if x[0] >= 0 else 1
     e = np.zeros_like(x)
     e[0] = 1
     u = x - sign * sigma * e
@@ -19,9 +24,7 @@ def qr(A):
         if m == n and i == n - 1:
             break
         Ai = A[i:, i:]
-        # to match numpy implementation
-        sign = 1 if i == n - 1 else -1
-        v = householder(Ai[:, 0], sign)
+        v = householder(Ai[:, 0])
         H_hat = np.identity(m - i) - 2 * np.outer(v, v)
         H = np.pad(H_hat, (i, 0), 'constant')
         H[np.diag_indices(i)] = 1
@@ -59,16 +62,34 @@ def testQR():
             [6,167,-68],
             [-4,24,-41]
         ],
+        np.random.random((10, 10)),
+        np.random.random((100, 100)),
+        np.random.random((200, 100)),
     ]
 
     for A in tests:
         Q, R = qr(np.array(A))
         _Q, _R = linalg.qr(A, mode='complete')
-        assert np.allclose(
-            Q, _Q), f"Q should be :\n{np.array(_Q)},\n got:\n {Q}"
-        assert np.allclose(
-            R, _R), f"Q should be :\n{np.array(_R)},\n got:\n {R}"
+
+        assert np.allclose(R, _R), f"Q should be :\n{np.array(_R)},\n got:\n {R}"
+        assert np.allclose(Q, _Q), f"Q should be :\n{np.array(_Q)},\n got:\n {Q}"
+
+
+    
+        
+def testPerformance():
+    for n in 100,1000:
+        A = np.random.random((n, n))
+        start_time = time.time()
+        Q, R = qr(np.array(A))
+        print(f'{n}x{n} matrix cost time: {time.time() - start_time} seconds')
+
+        A = np.random.random((n, n))
+        start_time = time.time()
+        Q, R = linalg.qr(A, mode='complete')
+        print(f'{n}x{n} matrix numpy cost time: {time.time() - start_time} seconds')
 
 
 testHouseholder()
 testQR()
+testPerformance()
