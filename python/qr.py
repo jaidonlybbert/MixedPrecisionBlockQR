@@ -13,11 +13,11 @@ def householder(x):
     u = x - sign * sigma * e
     return u / np.linalg.norm(u)
 
-def qr(A):
+def qr(A, dtype=np.float64):
     if not isinstance(A, np.ndarray):
-        A = np.array(A)
+        A = np.array(A, dtype=dtype)
     m,n = A.shape
-    Q,H = np.identity(m), np.identity(m)
+    Q,H = np.identity(m, dtype=dtype), np.identity(m, dtype=dtype)
     
     for i in range(n):
         # skip last transformation if is sqare matrix
@@ -25,7 +25,7 @@ def qr(A):
             break
         Ai = A[i:, i:]
         v = householder(Ai[:, 0])
-        H_hat = np.identity(m - i) - 2 * np.outer(v, v)
+        H_hat = np.identity(m - i, dtype=dtype) - 2 * np.outer(v, v)
         H = np.pad(H_hat, (i, 0), 'constant')
         H[np.diag_indices(i)] = 1
         Q = Q.dot(H)
@@ -68,26 +68,27 @@ def testQR():
     ]
 
     for A in tests:
-        Q, R = qr(np.array(A))
+        Q, R = qr(A)
         _Q, _R = linalg.qr(A, mode='complete')
 
-        assert np.allclose(R, _R), f"Q should be :\n{np.array(_R)},\n got:\n {R}"
-        assert np.allclose(Q, _Q), f"Q should be :\n{np.array(_Q)},\n got:\n {Q}"
+        assert np.allclose(R, _R), f"Q should be :\n{_R},\n got:\n {R}"
+        assert np.allclose(Q, _Q), f"Q should be :\n{_Q},\n got:\n {Q}"
 
 
     
         
 def testPerformance():
-    for n in 100,1000:
-        A = np.random.random((n, n))
-        start_time = time.time()
-        Q, R = qr(np.array(A))
-        print(f'{n}x{n} matrix cost time: {time.time() - start_time} seconds')
+    for dtype in np.float64, np.float32:
+        for n in 100,1000:
+            A = np.random.random((n, n)).astype(dtype)
+            start_time = time.time()
+            Q, R = qr(A, dtype=dtype)
+            print(f'{n}x{n} {dtype} matrix cost time: {time.time() - start_time} seconds')
 
-        A = np.random.random((n, n))
-        start_time = time.time()
-        Q, R = linalg.qr(A, mode='complete')
-        print(f'{n}x{n} matrix numpy cost time: {time.time() - start_time} seconds')
+            A = np.random.random((n, n)).astype(dtype)
+            start_time = time.time()
+            Q, R = linalg.qr(A, mode='complete')
+            print(f'{n}x{n} {dtype} matrix numpy cost time: {time.time() - start_time} seconds')
 
 
 testHouseholder()
