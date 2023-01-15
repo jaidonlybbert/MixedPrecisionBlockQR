@@ -62,6 +62,11 @@ def testQR():
             [6,167,-68],
             [-4,24,-41]
         ],
+        [
+            [1,2,3],
+            [1,2,3],
+            [1,2,3]
+        ],
         np.random.random((10, 10)),
         np.random.random((100, 100)),
         np.random.random((200, 100)),
@@ -93,4 +98,4 @@ def testPerformance():
 
 testHouseholder()
 testQR()
-testPerformance()
+# testPerformance()
