@@ -1,9 +1,8 @@
 import numpy as np
 from numpy import linalg
 from qr import qr
-
-def get_error(A, Q, R):
-    return np.linalg.norm(A - np.dot(Q, R)) / np.linalg.norm(A)
+from utils import get_error, generate_matrix
+from prettytable import PrettyTable
 
 def test():
     tests = [
@@ -27,6 +26,7 @@ def test():
         np.random.random((10, 10)),
         np.random.random((100, 100)),
         np.random.random((200, 100)),
+        generate_matrix(100, 100),
     ]
     for mode in ('complete', 'reduced'):
         for A in tests:
@@ -63,5 +63,27 @@ def edge_case_test():
         expectError = 1e-8
         assert error < expectError, f"error is {error}, expect small than {expectError}"
 
+def ill_conditioned_test():
+    sizes = [10, 100]
+    condition_numbers = [3,4,5,6,7]
+    
+    rows = []
+    for n in sizes:
+        for con in condition_numbers:
+            A = generate_matrix(n, 10 ** con)
+
+            Q, R = qr(A)
+            Q1, R1 = qr(A, dtype=np.float32)
+            _Q,_R = linalg.qr(A)
+
+            rows.append(
+                [(n,f'10^{con}'), get_error(A,Q,R), get_error(A,Q1,R1), get_error(A,_Q,_R)]
+            )
+    table = PrettyTable()
+    table.field_names = ["(n, condition_num)", "qr float64", "qr float32", "numpy(lapack) qr float64"]
+    table.add_rows(rows)
+    print(table)
+
 test()
 edge_case_test()
+ill_conditioned_test()

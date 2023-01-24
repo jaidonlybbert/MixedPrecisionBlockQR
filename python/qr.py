@@ -11,6 +11,8 @@ def householder(x):
 def qr(A, dtype=np.float64, mode='reduced'):
     if not isinstance(A, np.ndarray):
         A = np.array(A, dtype=dtype)
+    if A.dtype != dtype:
+        A = A.astype(dtype)
     m,n = A.shape
     Q,H = np.identity(m, dtype=dtype), np.identity(m, dtype=dtype)
     
@@ -18,6 +20,7 @@ def qr(A, dtype=np.float64, mode='reduced'):
         # skip last transformation if is sqare matrix
         if m == n and i == n - 1:
             break
+        # TODO: merge line 22,23
         Ai = A[i:, i:]
         column_need_transform = Ai[:, 0]
         # skip this transformation if this vector is all zero 
