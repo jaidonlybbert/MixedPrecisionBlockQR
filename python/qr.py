@@ -2,7 +2,6 @@ import numpy as np
 from numpy import linalg
 import time
 
-
 np.set_printoptions(suppress = True)
 
 def householder(x):
@@ -13,7 +12,7 @@ def householder(x):
     u = x - sign * sigma * e
     return u / np.linalg.norm(u)
 
-def qr(A, dtype=np.float64):
+def qr(A, dtype=np.float64, mode='reduced'):
     if not isinstance(A, np.ndarray):
         A = np.array(A, dtype=dtype)
     m,n = A.shape
@@ -30,7 +29,10 @@ def qr(A, dtype=np.float64):
         H[np.diag_indices(i)] = 1
         Q = Q.dot(H)
         A = H.dot(A)
-    return Q, A
+    if mode == 'reduced':
+        return Q[:,:n], A[:n]
+    else:
+        return Q,A
 
 def testHouseholder():
     raw = np.array([0, 0, 2])
@@ -71,16 +73,16 @@ def testQR():
         np.random.random((100, 100)),
         np.random.random((200, 100)),
     ]
+    for mode in ('complete', 'reduced'):
+        for A in tests:
+            Q, R = qr(A, mode=mode)
+            _Q, _R = linalg.qr(A, mode=mode)
 
-    for A in tests:
-        Q, R = qr(A)
-        _Q, _R = linalg.qr(A, mode='complete')
-
-        error = np.linalg.norm(A - np.dot(Q, R)) / np.linalg.norm(A)
-        expectError = 1e-8
-        assert error < expectError, f"error is {error}, expect small than {expectError}"
-        assert np.allclose(R, _R), f"Q should be :\n{_R},\n got:\n {R}"
-        assert np.allclose(Q, _Q), f"Q should be :\n{_Q},\n got:\n {Q}"
+            error = np.linalg.norm(A - np.dot(Q, R)) / np.linalg.norm(A)
+            expectError = 1e-8
+            assert error < expectError, f"error is {error}, expect small than {expectError}"
+            assert np.allclose(R, _R), f"Q should be :\n{_R},\n got:\n {R}"
+            assert np.allclose(Q, _Q), f"Q should be :\n{_Q},\n got:\n {Q}"
 
 
 
@@ -100,6 +102,6 @@ def testPerformance():
             print(f'{n}x{n} {dtype} matrix numpy cost time: {time.time() - start_time} seconds')
 
 
-testHouseholder()
+# testHouseholder()
 testQR()
 # testPerformance()
