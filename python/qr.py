@@ -20,9 +20,7 @@ def qr(A, dtype=np.float64, mode='reduced'):
         # skip last transformation if is sqare matrix
         if m == n and i == n - 1:
             break
-        # TODO: merge line 22,23
-        Ai = A[i:, i:]
-        column_need_transform = Ai[:, 0]
+        column_need_transform = A[i:,i]
         # skip this transformation if this vector is all zero 
         if np.allclose(column_need_transform, np.zeros_like(column_need_transform)):
             continue
