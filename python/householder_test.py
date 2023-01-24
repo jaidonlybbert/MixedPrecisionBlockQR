@@ -2,7 +2,9 @@ import numpy as np
 from qr import householder
 
 def test_householder():
+    # Vector to be reflected
     raw = np.array([0, 0, 2])
+    # Unit normal vector for reflection plane
     v = householder(raw)
     assert np.allclose(v, np.array([1, 0, 1]) / (2 ** (1/2))), "Unit vector v is not correct"
 

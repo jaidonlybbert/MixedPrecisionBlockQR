@@ -1,6 +1,6 @@
 import numpy as np
 from numpy import linalg
-from qr import qr
+from qr import householder_qr
 from utils import get_error, generate_matrix
 from prettytable import PrettyTable, MARKDOWN
 import time
@@ -13,7 +13,7 @@ def get_error_and_duration(A, qr_fn):
     # row.append(f'error:{get_error(A,Q,R)}, duration:{round(end_time - start_time, 2)}')
 
 def qr_float32(A):
-    return qr(A, dtype=np.float32)
+    return householder_qr(A, dtype=np.float32)
 
 def ill_conditioned_test():
     sizes = [10, 100, 1000]
@@ -28,7 +28,7 @@ def ill_conditioned_test():
             error, duration = get_error_and_duration(A, qr_float32)
             row.append(f'e:{error}, d:{duration}s')
 
-            error, duration = get_error_and_duration(A, qr)
+            error, duration = get_error_and_duration(A, householder_qr)
             row.append(f'e:{error}, d:{duration}s')
 
             error, duration = get_error_and_duration(A, linalg.qr)

@@ -1,14 +1,36 @@
 import numpy as np
 
-def householder(x):
-    sigma = np.linalg.norm(x)
-    sign = -1 if x[0] >= 0 else 1
-    e = np.zeros_like(x)
-    e[0] = 1
-    u = x - sign * sigma * e
-    return u / np.linalg.norm(u)
+def compute_householder_normal(u):
+    """Computes unit normal vector for bisecting reflection plane
+    of the Householder reflection
 
-def qr(A, dtype=np.float64, mode='reduced'):
+    Args:
+        x (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
+    sigma = np.linalg.norm(u)
+    sign = -1 if u[0] >= 0 else 1
+    e = np.zeros_like(u)
+    e[0] = 1
+    v = sign * sigma * e
+    w = (u - v) / np.linalg.norm(u)
+    return w
+
+def householder_qr(A, dtype=np.float64, mode='reduced'):
+    """Implements QR decomposition using Householder reflections for NxM matrix A
+    
+    Bhaskar Dasgupta. Applied Mathematical Methods. Pearson, 1986.
+
+    Args:
+        A (_type_): _description_
+        dtype (_type_, optional): _description_. Defaults to np.float64.
+        mode (str, optional): _description_. Defaults to 'reduced'.
+
+    Returns:
+        _type_: _description_
+    """
     if not isinstance(A, np.ndarray):
         A = np.array(A, dtype=dtype)
     if A.dtype != dtype:
@@ -20,12 +42,15 @@ def qr(A, dtype=np.float64, mode='reduced'):
         # skip last transformation if is sqare matrix
         if m == n and i == n - 1:
             break
+        # select i-th coloumn of A
         column_need_transform = A[i:,i]
         # skip this transformation if this vector is all zero 
         if np.allclose(column_need_transform, np.zeros_like(column_need_transform)):
             continue
-        v = householder(column_need_transform)
-        H_hat = np.identity(m - i, dtype=dtype) - 2 * np.outer(v, v)
+        # compute normal vector of bisecting plane
+        w = compute_householder_normal(column_need_transform)
+        # compute householder reflection matrix
+        H_hat = np.identity(m - i, dtype=dtype) - 2 * np.outer(w, w)
         H = np.pad(H_hat, (i, 0), 'constant')
         H[np.diag_indices(i)] = 1
         Q = Q.dot(H)
