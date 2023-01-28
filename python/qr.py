@@ -1,5 +1,7 @@
 import numpy as np
 
+# remember to run accuracy_test and ensure it pass if you change this file
+
 def compute_householder_normal(u):
     """Computes unit normal vector for bisecting reflection plane
     of the Householder reflection
@@ -15,7 +17,8 @@ def compute_householder_normal(u):
     e = np.zeros_like(u)
     e[0] = 1
     v = sign * sigma * e
-    w = (u - v) / np.linalg.norm(u)
+    u = u - v
+    w = u / np.linalg.norm(u)
     return w
 
 def householder_qr(A, dtype=np.float64, mode='reduced'):

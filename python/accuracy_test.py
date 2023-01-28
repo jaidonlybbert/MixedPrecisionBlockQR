@@ -1,6 +1,6 @@
 import numpy as np
 from numpy import linalg
-from qr import qr
+from qr import householder_qr
 from utils import get_error, generate_matrix
 
 def test():
@@ -29,7 +29,7 @@ def test():
     ]
     for mode in ('complete', 'reduced'):
         for A in tests:
-            Q, R = qr(A, mode=mode)
+            Q, R = householder_qr(A, mode=mode)
             _Q, _R = linalg.qr(A, mode=mode)
 
             error = get_error(A, Q, R)
@@ -57,7 +57,7 @@ def edge_case_test():
         ],
     ]
     for A in edge_cases:
-        Q, R = qr(A)
+        Q, R = householder_qr(A)
         error = get_error(A, Q, R)
         expectError = 1e-8
         assert error < expectError, f"error is {error}, expect small than {expectError}"
