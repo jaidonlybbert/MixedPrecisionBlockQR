@@ -19,7 +19,7 @@ def qr_float16(A):
     return householder_qr(A, dtype=np.float16)
 
 def test():
-    sizes = [10, 100, 1000]
+    sizes = [10, 100, 500]
     condition_numbers = [3,4,5,6,7]
     
     duration_rows = []
@@ -44,7 +44,7 @@ def test():
     duration_table.field_names = ["(n, condition_num)", "qr float16", "qr float32", "qr float64", "numpy(lapack) qr float64"]
     error_table.add_rows(error_rows)
     duration_table.add_rows(duration_rows)
-    with open(os.path.join(os.path.dirname(__file__), './performanc e_test_result/error.md'), 'w') as f:
+    with open(os.path.join(os.path.dirname(__file__), './performance_test_result/error.md'), 'w') as f:
         f.write(error_table.get_string())
     with open(os.path.join(os.path.dirname(__file__), './performance_test_result/duration.md'), 'w') as f:
         f.write(duration_table.get_string())
