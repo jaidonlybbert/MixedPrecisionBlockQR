@@ -19,7 +19,7 @@ def linear_least_square(A, y):
         for k in  range(i + 1,n):
             total += X[k] * R[i][k]
         X[i] = (b[i] - total) / R[i][i]
-    return X
+    return np.array(X)
 
 
 def test():
@@ -49,4 +49,38 @@ def test():
         _X = np.linalg.lstsq(A, y, rcond=None)[0]
         assert np.allclose(X, X), f"X should be :\n{_X},\n got:\n {X}"
 
+def test_ill_condition():
+    # x + αy = 1
+    # αx + y = 0
+    # α = 0.999
+    A = np.array([
+        [1, 0.999],
+        [0.999, 1]
+    ])
+    y = np.array([1.0, 0.0])
+    delta_x = 0.0001
+    X = np.linalg.lstsq(A, y,rcond=None)[0]
+    A[0][1] += delta_x
+    A[1][0] += delta_x
+    _X = np.linalg.lstsq(A, y,rcond=None)[0]
+    print(np.linalg.norm(X - _X) / delta_x)
+
+def test_error():
+    delta_x = 0.001
+    dataset = generate_matrix(100, 10 ** 5)
+    y = dataset[-1]
+    x = dataset[0:-1].T
+
+    A = np.c_[np.ones(x.shape[0]), x]
+    print(np.linalg.cond(A)) # 200000
+    X = np.linalg.lstsq(A, y,rcond=None)[0]
+    
+    y[0] += delta_x
+    _X = np.linalg.lstsq(A, y,rcond=None)[0]
+
+    print(np.linalg.norm(X - _X) / delta_x) # 45
+
+    
+
 test()
+test_error()
