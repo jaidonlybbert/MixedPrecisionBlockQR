@@ -68,8 +68,14 @@ H = I - 2\mathbf{ww}^T
 \end{equation}
 where $I\in\mathbb{R}^{N\times{}N}$ is the identity matrix. \cite{bhaskar86}
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=75mm, angle=-90]{Householder2}
+\caption{Geometric illustration of the reflection of a vector to an axis. The result of this transformation is that the vector now only has one non-zero component.}
+\end{figure}
+
 \paragraph{}
-In order to get the upper triangular matrix $R \in\mathbb{R}^{N\times{}N}$ given a matrix $A \in\mathbb{R}^{N\times{}N}$ using householder reflections, each column is treated in sequence left to right. 
+In order to get the upper triangular matrix $R \in\mathbb{R}^{N\times{}N}$ given a matrix $A \in\mathbb{R}^{M\times{}N}$ using householder reflections, each column is treated in sequence left to right. 
 \pagebreak
 \begin{figure}[h]
 \centering
