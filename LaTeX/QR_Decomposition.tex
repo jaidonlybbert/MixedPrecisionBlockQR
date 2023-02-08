@@ -62,13 +62,26 @@ and can iteratively be applied to converge to $R$ as quickly as possible. Two ch
 
 \subsection{Householder Reflections}
 \paragraph{}
-The Householder reflection is a unitary transformation represented by a matrix $H\in\mathbb{R}^{N\times{}N}$ which reflects a vector $x\in\mathbb{R}^N$ across a hyperplane defined by its unit normal vector $\{v\in\mathbb{R}^N: \|v\|=1\}$. The transformation matrix is given by
+The Householder reflection is a unitary transformation represented by a matrix $H\in\mathbb{R}^{N\times{}N}$ which reflects a vector $x\in\mathbb{R}^N$ across a hyperplane defined by its unit normal vector $\{w\in\mathbb{R}^N: \|w\|=1\}$. The transformation matrix is given by
 \begin{equation}
-H = I - 2vv^T
+H = I - 2\mathbf{ww}^T
 \end{equation}
 where $I\in\mathbb{R}^{N\times{}N}$ is the identity matrix. \cite{bhaskar86}
 
+\begin{figure}[h]
+\centering
+\includegraphics[width=75mm, angle=-90]{Householder2}
+\caption{Geometric illustration of the reflection of a vector to an axis. The result of this transformation is that the vector now only has one non-zero component.}
+\end{figure}
 
+\paragraph{}
+In order to get the upper triangular matrix $R \in\mathbb{R}^{N\times{}N}$ given a matrix $A \in\mathbb{R}^{M\times{}N}$ using householder reflections, each column is treated in sequence left to right. 
+\pagebreak
+\begin{figure}[h]
+\centering
+\includegraphics[width=140mm, angle=-90]{Householder3}
+\caption{QR factorization algorithm with Householder reflections}
+\end{figure}
 
 \subsection{Givens Rotations}
 \paragraph{}
@@ -175,6 +188,7 @@ a_{31} & a_{32} & a_{33}
 \end{bmatrix}
 \end{equation}
 where . Multiplying through
+
 \begin{equation}
 P = GP_{prior} =
 \begin{bmatrix}
@@ -187,11 +201,14 @@ a_{11} & a_{12} & a_{13}\\
 a_{21} & a_{22} & a_{23}\\
 a_{31} & a_{32} & a_{33}
 \end{bmatrix}
-=
+\end{equation}
+
+\begin{equation}
+P = 
 \begin{bmatrix}
 \frac{a_{11}a_{11} + a_{21}a_{21}}{r} & \frac{a_{11}a_{12} + a_{21}a_{22}}{r} & \frac{a_{11}a_{13} + a_{21}a_{23}}{r}\\
--\frac{a_{21}a_{21}+ a_{11}a_{}{r} & -2.4 & 3.1\\
-0 & 4 & 3
+\frac{-a_{21}a_{11}+ a_{11}a_{21}}{r} & \frac{-a_{21}a_{12} + a_{11}a_{22}}{r} & \frac{-a_{21}a_{13} + a_{11}a{23}}{r} \\
+a_{31} & a_{32} & a_{33}
 \end{bmatrix}
 \end{equation}
 the zero is introduced in the desired location.
