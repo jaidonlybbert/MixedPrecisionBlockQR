@@ -62,3 +62,29 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
         return Q[:,:n], A[:n]
     else:
         return Q,A
+
+def block_qr(A, dtype=np.float64, mode='reduced'):
+    """Implements Block QR decomposition such that A = QR using Householder 
+    reflections and WY representation.
+
+    Reference:
+        Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins 
+        University Press. Pg. 239. Algorithm 5.2.3
+
+    Args:
+        A (np.ndarray): mxn rectangular matrix
+    """
+
+    if not isinstance(A, np.ndarray):
+        A = np.array(A, dtype=dtype)
+    if A.dtype != dtype:
+        A = A.astype(dtype)
+
+    m, n = A.shape
+    Q = np.zeros(shape=(m, n))
+    R = np.zeros(shape=(n, n))
+
+    if mode == 'reduced':
+        return Q[:,:n], R[:n]
+    else:
+        return Q,R
