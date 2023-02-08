@@ -72,8 +72,10 @@ except AssertionError as e:
 
 try:
     test(qr_func=block_qr)
-    print("All block QR tests passed.")
+    print("All block QR accuracy tests passed.")
 except AssertionError as e:
-    print(f"Block QR test failed: {e}")
+    print(f"Block QR accuracy test failed: {e}")
+except Exception as e:
+    print(f"Block QR implementation failed: {e}")
 
 

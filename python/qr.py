@@ -1,4 +1,5 @@
 import numpy as np
+from wy import test_wy_representation, wy_representation
 
 # remember to run accuracy_test and ensure it pass if you change this file
 
@@ -63,6 +64,41 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
     else:
         return Q,A
 
+def get_householder_factors(tile, dtype=np.float64):
+    """Find the group of householder transformation matrix factors V, and B such
+     that H_i = I - {B[i]}{V[i]}{V[i]}^T for each matrix in the group of householder
+     matrices H_group = [H_i, H_(i+1), ..., H_j] 
+     such that the matrix product Q = {H_i}{H_(i+1)}{...}{H_j} has the properties
+     of Q in the QR decomposition of tile = QR
+
+    Args:
+        tile (np.ndarray): A matrix of size m x (i-j+1)
+
+    Returns:
+        V (List[np.ndarray]): A list of Householder transformation matrices
+            [H_i, H_(i+j), ..., H_j]
+        B (List[np.float64]): A list of coefficients {beta}
+    """
+    m, r = tile.shape
+
+    V = []
+    B = []
+
+    for i in range(r):
+        u = tile[i:, i]
+        w = compute_householder_normal(u)
+        V.append(np.pad(w, (i, 0), 'constant'))
+        B.append(2.0)
+        H_i = np.identity(m - i, dtype=dtype) - 2 * np.outer(w, w)
+        H_i = np.pad(H_i, (i, 0), 'constant')
+        H_i[np.diag_indices(i)] = 1
+        
+        tile = H_i.dot(tile)
+
+    return V, B
+
+
+
 def block_qr(A, dtype=np.float64, mode='reduced'):
     """Implements Block QR decomposition such that A = QR using Householder 
     reflections and WY representation.
@@ -81,8 +117,33 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
         A = A.astype(dtype)
 
     m, n = A.shape
-    Q = np.zeros(shape=(m, n))
-    R = np.zeros(shape=(n, n))
+
+    Q = np.identity(m)
+    R = np.zeros(shape=(m, n))
+
+    lambda_ = 0
+    k = 0
+    r = 3
+
+    while lambda_ <= n:
+        tau = min(lambda_ + r, n+1)
+        k += 1
+
+        A_tile = A[lambda_:(m+1), lambda_:tau]
+        V, B = get_householder_factors(A_tile)
+
+        test_wy_representation(A_tile, V, B)
+
+        W, Y = wy_representation(V, B)
+        tile_h, tile_w = A_tile.shape
+        wy_mtx = np.identity(tile_h) - np.matmul(W, np.transpose(Y))
+
+        A[lambda_:(m+1), (tau+1):(n+1)] = np.matmul(np.transpose(wy_mtx), A[lambda_:(m+1), (tau+1):(n+1)])
+        Q[:, lambda_:(m+1)] = Q[:, lambda_:(m+1)] @ wy_mtx
+        
+        lambda_ = tau + 1
+
+    R = A
 
     if mode == 'reduced':
         return Q[:,:n], R[:n]
