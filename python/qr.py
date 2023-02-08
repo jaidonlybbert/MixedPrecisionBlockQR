@@ -143,7 +143,7 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
         
         lambda_ = tau + 1
 
-    R = A
+    R = np.linalg.inv(Q) @ A
 
     if mode == 'reduced':
         return Q[:,:n], R[:n]
