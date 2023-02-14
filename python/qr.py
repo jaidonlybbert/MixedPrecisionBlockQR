@@ -1,7 +1,7 @@
 import numpy as np
 from wy import wy_representation
 
-# remember to run accuracy_test and ensure it pass if you change this file
+# remember to run test_all to ensure the previous function is not broken if you change this file
 
 def compute_householder_normal(u):
     """Computes unit normal vector for bisecting reflection plane
