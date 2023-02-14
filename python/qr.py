@@ -41,7 +41,8 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
         A = A.astype(dtype)
     m,n = A.shape
     Q,H = np.identity(m, dtype=dtype), np.identity(m, dtype=dtype)
-    
+    V,B = [], []
+
     for i in range(n):
         # skip last transformation if is sqare matrix
         if m == n and i == n - 1:
@@ -53,6 +54,8 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
             continue
         # compute normal vector of bisecting plane
         w = compute_householder_normal(column_need_transform)
+        V.append(np.pad(w, (i, 0), 'constant'))
+        B.append(2.0)
         # compute householder reflection matrix
         H_hat = np.identity(m - i, dtype=dtype) - 2 * np.outer(w, w)
         H = np.pad(H_hat, (i, 0), 'constant')
@@ -61,8 +64,10 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
         A = H.dot(A)
     if mode == 'reduced':
         return Q[:,:n], A[:n]
-    else:
+    elif mode == 'complete':
         return Q,A
+    else:
+        return V,B
 
 def get_householder_factors(tile, dtype=np.float64):
     """Find the group of householder transformation matrix factors V, and B such
@@ -79,24 +84,7 @@ def get_householder_factors(tile, dtype=np.float64):
             [H_i, H_(i+j), ..., H_j]
         B (List[np.float64]): A list of coefficients {beta}
     """
-    m, r = tile.shape
-
-    V = []
-    B = []
-
-    for i in range(r):
-        u = tile[i:, i]
-        w = compute_householder_normal(u)
-        V.append(np.pad(w, (i, 0), 'constant'))
-        B.append(2.0)
-        H_i = np.identity(m - i, dtype=dtype) - 2 * np.outer(w, w)
-        H_i = np.pad(H_i, (i, 0), 'constant')
-        H_i[np.diag_indices(i)] = 1
-        
-        tile = H_i.dot(tile)
-
-    return V, B
-
+    return householder_qr(tile, mode='raw')
 
 
 def block_qr(A, dtype=np.float64, mode='reduced'):
