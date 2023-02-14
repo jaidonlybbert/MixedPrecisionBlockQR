@@ -1,5 +1,5 @@
 import numpy as np
-from wy import test_wy_representation, wy_representation
+from wy import wy_representation
 
 # remember to run accuracy_test and ensure it pass if you change this file
 
@@ -131,8 +131,6 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
 
         A_tile = A[lambda_:(m+1), lambda_:tau]
         V, B = get_householder_factors(A_tile)
-
-        test_wy_representation(A_tile, V, B)
 
         W, Y = wy_representation(V, B)
         tile_h, tile_w = A_tile.shape

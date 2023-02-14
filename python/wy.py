@@ -29,20 +29,3 @@ def wy_representation(V, B) -> np.ndarray:
     
     return W, Y
 
-def test_wy_representation(A, V, B):
-    # Verify Q = (Im - {W}{Y}^T) for the QR decomposition of A = QR
-    m, n = A.shape
-    _Q, _R = np.linalg.qr(A)
-
-    W, Y = wy_representation(V, B)
-
-    Q = np.identity(m) - np.matmul(W, np.transpose(Y))
-    Q = Q[:, :n]
-    error = np.linalg.norm(Q - _Q) / np.linalg.norm(_Q)
-    expectError = 1e-8
-    try:
-        assert error < expectError, f"error is {error}, expect small than {expectError}"
-        assert np.allclose(Q, _Q), f"Q should be :\n{_Q},\n got:\n {Q}"
-        print(f"WY representation tests passed.")
-    except AssertionError as e:
-        print(f"WY test failed: {e}")
