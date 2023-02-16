@@ -23,6 +23,7 @@ def get_general_matrix():
     np.random.random((10, 10)),
     np.random.random((100, 100)),
     np.random.random((200, 100)),
+    np.random.random((300, 100)),
     generate_matrix(100, 100),
 ])
 

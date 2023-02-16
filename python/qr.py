@@ -113,7 +113,7 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
     k = 0
     r = 3
 
-    while lambda_ <= n:
+    while lambda_ < n:
         tau = min(lambda_ + r, n+1)
         k += 1
 
