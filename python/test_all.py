@@ -1,5 +1,5 @@
 import numpy as np
-from qr import compute_householder_normal, get_householder_factors, householder_qr, block_qr
+from qr import compute_householder_normal, get_householder_factors, householder_qr, block_qr, block_recursive_qr
 from wy import wy_representation
 from test_data import get_general_matrix, get_strange_matrix
 from utils import get_error
@@ -22,7 +22,7 @@ def test_householder():
     except AssertionError as e:
         print(f"{red}householder test failed: {e}")
 
-def test_qr(qr_func=householder_qr):
+def test_qr(qr_func=householder_qr, strict_check=False):
     for mode in ('complete', 'reduced'):
         for A in get_general_matrix():
             try:
@@ -32,8 +32,9 @@ def test_qr(qr_func=householder_qr):
                 error = get_error(A, Q, R)
                 expectError = 1e-8
                 assert error < expectError, f"error is {error}, expect small than {expectError}"
-                # assert np.allclose(R, _R), f"R should be :\n{_R},\n got:\n {R}"
-                # assert np.allclose(Q, _Q), f"Q should be :\n{_Q},\n got:\n {Q}"
+                if strict_check:
+                    assert np.allclose(R, _R), f"R should be :\n{_R},\n got:\n {R}"
+                    assert np.allclose(Q, _Q), f"Q should be :\n{_Q},\n got:\n {Q}"
                 print(f"{green}{qr_func.__name__} QR tests passed.")
             except AssertionError as e:
                 print(f"{red}{qr_func.__name__} QR tests failed: {e}")
@@ -79,9 +80,10 @@ def test_wy_representation():
 
 
 test_householder()
-test_qr(qr_func=householder_qr)
+test_qr(qr_func=householder_qr, strict_check=True)
 test_qr_edgecases(qr_func=householder_qr)
 
 test_wy_representation()
 test_qr(qr_func=block_qr)
+test_qr(qr_func=block_recursive_qr)
 

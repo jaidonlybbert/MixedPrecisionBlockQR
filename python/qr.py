@@ -1,7 +1,8 @@
 import numpy as np
 from wy import wy_representation
-
+import math
 # remember to run test_all to ensure the previous function is not broken if you change this file
+np.set_printoptions(suppress=True)
 
 def compute_householder_normal(u):
     """Computes unit normal vector for bisecting reflection plane
@@ -135,3 +136,30 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
         return Q[:,:n], R[:n]
     else:
         return Q,R
+
+
+def block_recursive_qr(A, mode='reduced', b=3):
+    """Implements Recursive Block QR decomposition
+
+    Reference:
+        Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins 
+        University Press. Pg. 251. Algorithm 5.2.4
+
+    Args:
+        A (np.ndarray): mxn rectangular matrix
+        b: nb
+    """
+    m,n = A.shape
+    if n <= b:
+        Q,R = householder_qr(A)
+    else:
+        n1 = math.floor(n / 2)
+        Q1, R11 = block_recursive_qr(A[:, :n1], b)
+        R12 = Q1.T.dot(A[:,n1:])
+        Q2, R22 = block_recursive_qr(A[:,n1:] - Q1.dot(R12), b)
+        Q = np.c_[Q1,Q2]
+        up = np.c_[R11, R12]
+
+        down = np.c_[np.zeros((R22.shape[0], R11.shape[1])), R22]
+        R = np.r_[up, down]
+    return Q,R
