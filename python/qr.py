@@ -154,12 +154,16 @@ def block_recursive_qr(A, mode='reduced', b=3):
         Q,R = householder_qr(A)
     else:
         n1 = math.floor(n / 2)
-        Q1, R11 = block_recursive_qr(A[:, :n1], b)
+        Q1, R11 = block_recursive_qr(A[:, :n1], 'complete', b)
         R12 = Q1.T.dot(A[:,n1:])
-        Q2, R22 = block_recursive_qr(A[:,n1:] - Q1.dot(R12), b)
+        Q2, R22 = block_recursive_qr(A[:,n1:] - Q1.dot(R12), 'complete', b)
         Q = np.c_[Q1,Q2]
         up = np.c_[R11, R12]
 
         down = np.c_[np.zeros((R22.shape[0], R11.shape[1])), R22]
         R = np.r_[up, down]
-    return Q,R
+
+    if mode == 'reduced':
+        return Q[:,:n], R[:n]
+    else:
+        return Q,R
