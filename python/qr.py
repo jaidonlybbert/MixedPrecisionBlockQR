@@ -1,7 +1,8 @@
 import numpy as np
-from wy import test_wy_representation, wy_representation
-
-# remember to run accuracy_test and ensure it pass if you change this file
+from wy import wy_representation
+import math
+# remember to run test_all to ensure the previous function is not broken if you change this file
+np.set_printoptions(suppress=True)
 
 def compute_householder_normal(u):
     """Computes unit normal vector for bisecting reflection plane
@@ -41,7 +42,8 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
         A = A.astype(dtype)
     m,n = A.shape
     Q,H = np.identity(m, dtype=dtype), np.identity(m, dtype=dtype)
-    
+    V,B = [], []
+
     for i in range(n):
         # skip last transformation if is sqare matrix
         if m == n and i == n - 1:
@@ -53,6 +55,8 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
             continue
         # compute normal vector of bisecting plane
         w = compute_householder_normal(column_need_transform)
+        V.append(np.pad(w, (i, 0), 'constant'))
+        B.append(2.0)
         # compute householder reflection matrix
         H_hat = np.identity(m - i, dtype=dtype) - 2 * np.outer(w, w)
         H = np.pad(H_hat, (i, 0), 'constant')
@@ -61,8 +65,10 @@ def householder_qr(A, dtype=np.float64, mode='reduced'):
         A = H.dot(A)
     if mode == 'reduced':
         return Q[:,:n], A[:n]
-    else:
+    elif mode == 'complete':
         return Q,A
+    else:
+        return V,B
 
 def get_householder_factors(tile, dtype=np.float64):
     """Find the group of householder transformation matrix factors V, and B such
@@ -79,24 +85,7 @@ def get_householder_factors(tile, dtype=np.float64):
             [H_i, H_(i+j), ..., H_j]
         B (List[np.float64]): A list of coefficients {beta}
     """
-    m, r = tile.shape
-
-    V = []
-    B = []
-
-    for i in range(r):
-        u = tile[i:, i]
-        w = compute_householder_normal(u)
-        V.append(np.pad(w, (i, 0), 'constant'))
-        B.append(2.0)
-        H_i = np.identity(m - i, dtype=dtype) - 2 * np.outer(w, w)
-        H_i = np.pad(H_i, (i, 0), 'constant')
-        H_i[np.diag_indices(i)] = 1
-        
-        tile = H_i.dot(tile)
-
-    return V, B
-
+    return householder_qr(tile, mode='raw')
 
 
 def block_qr(A, dtype=np.float64, mode='reduced'):
@@ -129,14 +118,12 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
     k = 0
     r = 3
 
-    while lambda_ <= n:
+    while lambda_ < n:
         tau = min(lambda_ + r, n+1)
         k += 1
 
         A_tile = A[lambda_:(m+1), lambda_:tau]
         V, B = get_householder_factors(A_tile)
-
-        test_wy_representation(A_tile, V, B)
 
         W, Y = wy_representation(V, B)
         tile_h, tile_w = A_tile.shape
@@ -148,6 +135,37 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
         lambda_ = tau + 1
 
     R = np.linalg.inv(Q) @ A
+
+    if mode == 'reduced':
+        return Q[:,:n], R[:n]
+    else:
+        return Q,R
+
+
+def block_recursive_qr(A, mode='reduced', b=3):
+    """Implements Recursive Block QR decomposition
+
+    Reference:
+        Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins 
+        University Press. Pg. 251. Algorithm 5.2.4
+
+    Args:
+        A (np.ndarray): mxn rectangular matrix
+        b: nb
+    """
+    m,n = A.shape
+    if n <= b:
+        Q,R = householder_qr(A)
+    else:
+        n1 = math.floor(n / 2)
+        Q1, R11 = block_recursive_qr(A[:, :n1], 'complete', b)
+        R12 = Q1.T.dot(A[:,n1:])
+        Q2, R22 = block_recursive_qr(A[:,n1:] - Q1.dot(R12), 'complete', b)
+        Q = np.c_[Q1,Q2]
+        up = np.c_[R11, R12]
+
+        down = np.c_[np.zeros((R22.shape[0], R11.shape[1])), R22]
+        R = np.r_[up, down]
 
     if mode == 'reduced':
         return Q[:,:n], R[:n]
