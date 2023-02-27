@@ -98,6 +98,10 @@ def block_qr(A, dtype=np.float64, mode='reduced'):
 
     Args:
         A (np.ndarray): mxn rectangular matrix
+    
+    Returns:
+        Q (np.ndarray): mxm square matrix
+        R (np.ndarray): mxn rectangular upper triangular matrix
     """
 
     if not isinstance(A, np.ndarray):

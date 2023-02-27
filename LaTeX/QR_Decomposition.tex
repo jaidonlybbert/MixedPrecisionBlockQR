@@ -16,7 +16,7 @@
 %
 
 \title{Mixed-precision Block QR Decomposition on GPU}
-\author{Jaidon Lybbert}
+\author{Jaidon Lybbert, Fulin Li}
 \date{\today{}}
 
 \begin{document}
@@ -46,24 +46,29 @@ The matrix $R$ is upper triangular, a form which has the following useful proper
 \paragraph{}
 In order to compute the decomposition of $A$, the matrix is iteratively transformed by unitary matrices $\{U_i : 0 < i < k\}$ until the product is upper triangular. This upper triangular matrix is the matrix $R$ in $A = QR$
 \begin{equation}
+	\label{eqn:r}
 R = U_kU_{k-i} \dots U_1A.
 \end{equation}
 \paragraph{}
 It follows, that the matrix $Q$ is composed of the set of inverse transformations
 \begin{equation}
+	\label{eqn:q}
 Q = U_{1}^{T}U_{2}^{T} \dots U_{k}^{T}.
 \end{equation}
 \paragraph{}
 The key to solving for $R$ is to choose transformations $U_i$ which produce zeros below the diagonal of the matrix product
 \begin{equation}
-P = U_{i} \dots U_1A,
+	\label{eqn:update}
+A^{(i)} = U_{i} \dots U_1A,
 \end{equation}
-and can iteratively be applied to converge to $R$ as quickly as possible. Two choices for $U_i$ are Householder reflections, and Givens rotations.
+and can iteratively be applied to achieve $R$. Two choices for $U_i$ are Householder reflections, and Givens rotations.
 
-\subsection{Householder Reflections}
+\subsection{Transformations}
+\subsubsection{Householder Reflections}
 \paragraph{}
-The Householder reflection is a unitary transformation represented by a matrix $H\in\mathbb{R}^{N\times{}N}$ which reflects a vector $x\in\mathbb{R}^N$ across a hyperplane defined by its unit normal vector $\{w\in\mathbb{R}^N: \|w\|=1\}$. The transformation matrix is given by
+The Householder reflection is a unitary transformation represented by a matrix $H\in\mathbb{R}^{N\times{}N}$ which reflects a vector $\mathbf{u}\in\mathbb{R}^N$ across a hyperplane defined by its unit normal vector $\{\mathbf{w}\in\mathbb{R}^N: \|\mathbf{w}\|=1\}$. The transformation matrix is given by
 \begin{equation}
+	\label{eqn:Householder}
 H = I - 2\mathbf{ww}^T
 \end{equation}
 where $I\in\mathbb{R}^{N\times{}N}$ is the identity matrix. \cite{bhaskar86}
@@ -74,8 +79,21 @@ where $I\in\mathbb{R}^{N\times{}N}$ is the identity matrix. \cite{bhaskar86}
 \caption{Geometric illustration of the reflection of a vector to an axis. The result of this transformation is that the vector now only has one non-zero component.}
 \end{figure}
 
-\paragraph{}
-In order to get the upper triangular matrix $R \in\mathbb{R}^{N\times{}N}$ given a matrix $A \in\mathbb{R}^{M\times{}N}$ using householder reflections, each column is treated in sequence left to right. 
+To reflect a vector $\mathbf{u}\in\mathbb{R}^N$ such that it points in the direction of a target vector $\mathbf{v}\in\mathbb{R}^N$, the transformation matrix $H$ can be computed by \eqref{eqn:Householder}, where $\mathbf{w}$ is given by
+
+\begin{equation}
+	\label{eqn:normal}
+\mathbf{w} = \mathbf{v} - \mathbf{u},
+\end{equation}
+
+such that,
+
+\begin{equation}
+H\mathbf{u} = \|\mathbf{u}\|\mathbf{\hat{v}},
+\end{equation}
+
+where $\mathbf{\hat{v}}$ is a unit vector in the direction of the target vector $\mathbf{v}$.
+
 \pagebreak
 \begin{figure}[h]
 \centering
@@ -83,7 +101,7 @@ In order to get the upper triangular matrix $R \in\mathbb{R}^{N\times{}N}$ given
 \caption{QR factorization algorithm with Householder reflections}
 \end{figure}
 
-\subsection{Givens Rotations}
+\subsubsection{Givens Rotations}
 \paragraph{}
 A Givens rotation is a unitary transformation which rotates a vector $x$ counter-clockwise in a chosen plane. For example, possible Givens rotation matrices in $\mathbb{R}^4$ include
 \begin{equation}
@@ -107,10 +125,6 @@ s & c & 0 & 0\\
 \end{bmatrix},
 \end{equation}
 where $c = \cos{\theta}$ and $s = \sin{\theta}$. Each of these examples have the effect of rotating the vector in different planes.
-\paragraph{}
-The Givens rotation is parallelizable because it effects only two dimensions of the input vector. For example, the second and last transformations above could 
-simultaneously be computed on the vector $x$, then the results combined by selecting the first 2 
-dimensions of the first result, and the second two dimensions of the second result.
 
 \paragraph{}
 A Givens rotation can easily be computed to introduce zeros in the matrix $P$. The scalars $c$ and $s$ 
@@ -126,8 +140,7 @@ a_{31} & a_{32} & a_{33}
 \end{equation}
 \paragraph{}
 We target the second dimension of the column vector, so we rotate on the plane spanned by 
-the first two dimensions. We don’t choose the plane spanned by the second and third dimensions, 
-because we would end up losing the zero in the third row in the process. The Givens rotation to rotate 
+the first two dimensions. The Givens rotation to rotate 
 on this plane is of the form
 \begin{equation}
 G = 
@@ -187,7 +200,6 @@ a_{21} & a_{22} & a_{23}\\
 a_{31} & a_{32} & a_{33}
 \end{bmatrix}
 \end{equation}
-where . Multiplying through
 
 \begin{equation}
 P = GP_{prior} =
@@ -211,7 +223,244 @@ P =
 a_{31} & a_{32} & a_{33}
 \end{bmatrix}
 \end{equation}
+
+\begin{equation}
+P = 
+\begin{bmatrix}
+\frac{a_{11}a_{11} + a_{21}a_{21}}{r} & \frac{a_{11}a_{12} + a_{21}a_{22}}{r} & \frac{a_{11}a_{13} + a_{21}a_{23}}{r}\\
+0 & \frac{-a_{21}a_{12} + a_{11}a_{22}}{r} & \frac{-a_{21}a_{13} + a_{11}a{23}}{r} \\
+a_{31} & a_{32} & a_{33}
+\end{bmatrix}
+\end{equation}
 the zero is introduced in the desired location.
+
+\subsubsection{WY-representation}
+
+For the factored form of $Q \in \mathbb{R}^{M \times M} = {Q_1}{Q_2}{\dots}{Q_i}{\dots}{Q_n}$ where $Q_i = {I_m} - {\beta{}_i}{v_i}{v_i}^T$ and the factors ${v_i, b_i}$ are stored as  
+
+\begin{equation}
+V \in \mathbb{R}^{M \times n} =
+\begin{bmatrix}
+\mathbf{w}_1 & \mathbf{w}_2 & \cdots & \mathbf{w}_{n}
+\end{bmatrix}
+\end{equation}
+
+\begin{equation}
+B \in \mathbb{R}^{n} = 
+\begin{bmatrix}
+\beta{}_1 & \beta{}_2 & \cdots & \beta{}_{n}
+\end{bmatrix}
+\end{equation}
+
+ the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$.
+
+\paragraph{}
+Below is an implementation of the algorithm to compute W and Y, from V and B using Numpy in Python.
+
+\begin{lstlisting}
+def wy_representation(V, B):
+    m = len(V[0])
+    r = len(V)
+
+    Y = np.array(V[0]).reshape(m, 1)
+    W = np.array(B[0]*V[0]).reshape(m, 1)
+
+    for i in range(1, r):
+        z = B[i] * np.dot((np.identity(m) - 
+			      np.matmul(W, np.transpose(Y))), V[i])
+        z = z.reshape(m, 1)
+        W = np.concatenate((W, z), axis=1)
+        Y = np.concatenate((Y, V[i].reshape(m, 1)), axis=1)
+    
+    return W, Y
+\end{lstlisting}
+
+\subsection{Algorithms}
+\subsubsection{Householder QR}
+\paragraph{}
+In order to get the upper triangular matrix $R \in\mathbb{R}^{N\times{}N}$ given a matrix $A \in\mathbb{R}^{M\times{}N}$ using householder reflections, we can use \eqref{eqn:r}, where the set of unitary transformations is a set of padded householder matrices $\{U_i\in\mathbb{R}^{M\times{}M} : 0 < i < N\}$, so that,
+\begin{equation}
+R = U_{N-1} U_{N-2} \dots U_1A.
+\end{equation}
+
+Let 
+\begin{equation}
+A^{(i)}=U_{i} \dots U_1A
+\end{equation}
+represent the i-th update of matrix A, so $A^{(N)}=R$ and $A^{(0)} = A$. Then the calculation of $U_i$ depends on the updated matrix $A^{(i-1)}$.
+\paragraph{}
+The householder QR algorithm procedure is to sequentially, and iteratively calculate each matrix $U_i$ from $A^{(i-1)}$, then update the matrix $A^{(i)} = U_iA^{(i-1)}$ for the next iteration, until $A^{(N)}=R$ is achieved. At each iteration, $U_i$ is determined such that the i-th column of $A^{(i-1)}$ is transformed so that all elements below the diagonal of the column are zero in the updated matrix $A^{(i)} = U_iA^{(i-1)}$.
+
+For example,
+
+\begin{equation}
+A^{(1)} =
+\begin{bmatrix}
+\times & \times & \cdots & \times & \times\\
+0 & \times  & \cdots & \times & \times\\
+0 & \times  & \cdots & \times & \times\\
+\vdots & \vdots  & \ddots & \vdots & \vdots\\
+0 & \times  & \cdots & \times & \times\\
+\end{bmatrix}
+\end{equation}
+
+\begin{equation}
+A^{(2)} =
+\begin{bmatrix}
+\times & \times & \cdots & \times & \times\\
+0 & \times  & \cdots & \times & \times\\
+0 & 0 & \cdots & \times & \times\\
+\vdots & \vdots  & \ddots & \vdots & \vdots\\
+0 & 0  & \cdots & \times & \times\\
+\end{bmatrix}
+\end{equation}
+
+\begin{equation}
+A^{(N-1)} = R =
+\begin{bmatrix}
+\times & \times & \cdots & \times & \times\\
+0 & \times  & \cdots & \times & \times\\
+0 & 0 & \cdots & \times & \times\\
+\vdots & \vdots  & \ddots & \vdots & \vdots\\
+0 & 0  & \cdots & 0 & \times\\
+\end{bmatrix}
+\end{equation}
+
+Each padded householder transformation matrix $U_{i}\in\mathbb{R}^{M\times{}M}$ is created by padding a householder matrix $H_{i}\in\mathbb{R}^{(M-i)\times{}(M-i)}$ with ones along the upper diagonal.
+
+\begin{equation}
+U_{i}\in\mathbb{R}^{M\times{}M} =
+\begin{bmatrix}
+1 & 0 & \cdots & 0  & 0\\
+0 & 1  & \cdots & 0 & 0\\
+0 & 0 & \cdots & 0 & 0\\
+\vdots & \vdots  & \ddots & \vdots & \vdots\\
+0 & 0  & \cdots & 0 & H_{i}\in\mathbb{R}^{(M-i)\times{}(M-i)}\\
+\end{bmatrix}
+\end{equation}
+
+Let $A'^{(i)}\in\mathbb{R}^{(M-i)\times{}(M-i)}$ be the lower right submatrix of $A^{(i)}$, such that
+
+\begin{equation}
+A^{(i)} =
+\begin{bmatrix}
+1 & 0 & \cdots & 0  & 0\\
+0 & 1  & \cdots & 0 & 0\\
+0 & 0 & \cdots & 0 & 0\\
+\vdots & \vdots  & \ddots & \vdots & \vdots\\
+0 & 0  & \cdots & 0 & A'^{(i)}\in\mathbb{R}^{(M-i)\times{}(M-i)}\\
+\end{bmatrix}
+\end{equation}
+
+Each householder matrix $H_{i}$ is calculated by obtaining $\mathbf{w}_i\in\mathbb{R}^{M-i}$ from the submatrix $A'^{(i-1)}\in\mathbb{R}^{(M-i+1)\times{}(M-i+1)}$, such that
+
+\begin{equation}
+A^{(i)} =
+\begin{bmatrix}
+1 & 0 & \cdots & 0  & 0\\
+0 & 1  & \cdots & 0 & 0\\
+0 & 0 & \cdots & 0 & 0\\
+\vdots & \vdots  & \ddots & \vdots & \vdots\\
+0 & 0  & \cdots & 0 & A'^{(i)}\in\mathbb{R}^{(M-i)\times{}(M-i)}\\
+\end{bmatrix}
+\end{equation}
+
+and
+
+\begin{equation}
+A'^{(i)} =
+\begin{bmatrix}
+\mathbf{u_i} & \mathbf{c_2}  & \cdots & \mathbf{c_j} & \cdots \mathbf{c}_{M-1}\\
+\end{bmatrix}.
+\end{equation}
+where $\mathbf{c}_j$ is the j-th column of $A'^{(i)}$, and $\mathbf{u}_i\in\mathbb{R}^{M-i}$ is used as the vector $\mathbf{u}$ in \eqref{eqn:normal} to calculate $\mathbf{w}_{i}$.
+\paragraph{}
+Let
+\begin{equation}
+\mathbf{v}_i\in\mathbb{R}^{M-i} = 
+\begin{bmatrix}
+\|\mathbf{u_i}\| \\
+0  \\
+\vdots \\
+0 \\
+\end{bmatrix}.
+\end{equation}
+
+then $\mathbf{w}_i$ is obtained from $\mathbf{u}_i$ and $\mathbf{v}_i$ according to \eqref{eqn:normal}, $H_i$ is determined by \eqref{eqn:Householder} from $\mathbf{w}_i$, $U_i$ is obtained by padding $H_i$, $A^{(i+1)}$ is obtained by \eqref{eqn:update}, and the iterations continue until R is achieved, as in \eqref{eqn:r}.
+
+\paragraph{}
+Q can easily be computed by keeping a running matrix product according to \eqref{eqn:q} during the iterations of the algorithm.
+
+\paragraph{}
+A simplified Householder QR algorithm is given below, using the Numpy library in Python 3. A more complete implementation, factoring in edge cases is available on Github.
+
+\begin{lstlisting}
+# Householder QR Decomposition
+def householder_qr(A):
+    m,n = A.shape
+    Q,H = np.identity(m), np.identity(m)
+
+    for i in range(n):
+        u = A[i:,i]
+        v = np.zeros_like(u)
+        v[0] = np.linalg.norm(u)
+        w = (u - v) / np.linalg.norm(u - v)
+        H_hat = np.identity(m - i) - 2 * np.outer(w, w)
+        H = np.pad(H_hat, (i, 0))
+        H[np.diag_indices(i)] = 1
+        Q = Q.dot(H)
+        A = H.dot(A)
+    return Q,A
+\end{lstlisting}
+
+\paragraph{}
+The dependence of $U_i$ on $A^{(i-1)}$ limits the parallelism of the Householder QR algorithm. The matrix update portion $A^{(i)} = U_iA^{(i-1)}$ can be computed by parallel matrix multiply algorithms, however these operations are interspersed with the computation of the padded householder matrix $U_i$, which is highly sequential. If the parallel portions of this algorithm are implemented on a GPU, and the sequential portions on the host CPU, memory bandwidth and latency become a significant speed and efficiency bottleneck, as the data is passed back and forth between CPU memory and GPU memory.
+
+\subsubsection{Block QR}
+\paragraph{}
+ The Block QR algorithm reduces the memory workload by combining multiple householder transformations into a single matrix via the WY-representation of matrix products, before doing the matrix update.
+
+\paragraph{}
+Returning to equation \eqref{eqn:r}, the Block QR algorithm splits the matrix $A \in\mathbb{R}^{M\times{}N}$ into $b = ceil(\frac{N}{n_b})$ panels $\{P_j \in \mathbb{R}^{M\times{}n_b} : 0 < j <= b\}$ of width $n_b$.
+
+\begin{equation}
+A = 
+\begin{bmatrix}
+P_1 & P_2 & \cdots & P_b
+\end{bmatrix}
+\end{equation}
+
+For each panel, $n_b$ householder vectors $\{\mathbf{w}_k \in \mathbb{R}^M : 0 < k <= n_b\}$ are determined to form a transformation $U_j \in \mathbb{R}^{M\times M} = I - W_jY_j^T$ such that the set $\{U_j : 0 < j <= b\}$ satisfies \eqref{eqn:r}.
+
+$W_j$ and $Y_j$ are computed using the Householder factors $\mathbf{w}_k$ and $\beta{}$ in the general householder equation $H = I - \beta{}\mathbf{w}\mathbf{w}^T$, where in our case $\beta = 2$ as in \eqref{eqn:Householder}.
+
+\begin{equation}
+W_j, Y_j = wy\_representation(V_j, B_j)
+\end{equation}
+
+where 
+\begin{equation}
+V_j \in \mathbb{R}^{M \times n_b} =
+\begin{bmatrix}
+\mathbf{w}_1 & \mathbf{w}_2 & \cdots & \mathbf{w}_{n_b}
+\end{bmatrix}
+\end{equation}
+and
+\begin{equation}
+B_j \in \mathbb{R}^{n_b} = 
+\begin{bmatrix}
+\beta{}_1 & \beta{}_2 & \cdots & \beta{}_{n_b}
+\end{bmatrix}
+\end{equation}
+
+At each iteration $j$ of the block QR algorithm, $U_j$ is computed by the W-Y representation, then the sub-matrix $A'^{(j)} \in \mathbb{R}^{(m - (j * n_b)) \times (n - (j * n_b))}$ is updated by $A'^{(j)} = U_{j}A'^{(j-1)}$.
+
+\paragraph{}
+When $j = b$ then $(j * n_b) = N$, the width of sub-matrix $A'^{(j)}$ is zero, the matrix $A^{(j)} = A^{(n_b)} = R$, and the decomposition is complete.
+
+\subsubsection{Recursive Block QR}
+\subsubsection{Tiled QR}
+
 
 \bibliographystyle{plain}
 \bibliography{refs}
