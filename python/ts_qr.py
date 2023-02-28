@@ -34,19 +34,44 @@ def ts_qr(A):
     L1 = arrange_matrixs_to_diag(U1, U2, U3, U4) 
     L2 = arrange_matrixs_to_diag(U12, U34)
     Q = L1.dot(L2).dot(U1234)
-    return Q,R1234
+    reduction_tree = [U1234, U12, U34, U1,U2,U3,U4]
+    return Q,R1234, reduction_tree
 
 
     
-# def tiled_qr(A):
-#     B1 = A[:,0:3]
-#     return ts_qr(B1)
+def tiled_qr(A):
+    B1 = A[:,0:3]
+    Q1,R11, reduction_tree = ts_qr(B1)
+    U1234, U12, U34, U1,U2,U3,U4 = reduction_tree
+    # Apply QT horizontally across trailing matrix
+    A[0:3,3:6] = U1.T.dot(A[0:6,3:6])
+    A[6:9,3:6] = U2.T.dot(A[6:12,3:6])
+    A[12:15,3:6] = U3.T.dot(A[12:18,3:6])
+    A[18:21,3:6] = U4.T.dot(A[18:24,3:6])
+
+    # Apply QT vertically
+    A0 = np.r_[A[0:3, 3:6], A[6:9, 3:6]]
+    A[0:3, 3:6] = U12.T.dot(A0)
+    A1 = np.r_[A[12:15, 3:6], A[18:21, 3:6]]
+    A[12:15, 3:6] = U34.T.dot(A1)
+
+    A3 = np.r_[A[0:3, 3:6], A[12:15, 3:6]]
+    A[0:3, 3:6] = U1234.T.dot(A3)
+
+    B2 = A[:,3:6]
+    Q2,R22, reduction_tree = ts_qr(B2)
+    Q = np.c_[Q1,Q2]
+    up = np.c_[R11, R22]
+
+    down = np.c_[np.zeros((R22.shape[0], R11.shape[1])), R22]
+    R = np.r_[up, down]
+
+    return Q, R
 
 
+A = np.random.random((4 * 6, 3 * 2))
 
-A = np.random.random((4 * 6, 3 * 3))
-B1 = A[:,0:3]
-Q, R = ts_qr(B1)
-_Q,_R = np.linalg.qr(B1)
-print(np.allclose(_R, R))
+Q,R = tiled_qr(A)
+_Q,_R = np.linalg.qr(A)
 print(np.allclose(Q, _Q))
+print(np.allclose(R, _R))
