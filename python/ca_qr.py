@@ -70,8 +70,7 @@ def tiled_qr(A):
 
     B2 = A[3:,3:6]
     Q2, R22 = householder_qr(B2)
-    Q3 = Q2.dot(A[0:3, 3:6])
-    # dont' know how to get Q
+    # need fix Q
     Q = Q1
     Q = np.zeros(1)
     R12 = A[0:3, 3:6]
