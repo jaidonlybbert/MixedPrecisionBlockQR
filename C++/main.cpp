@@ -12,7 +12,7 @@ VectorXd householder(VectorXd u) {
     VectorXd w = u / u.norm();
     return w;
 }
-
+// TODO: support rectangular matrix
 void qr_factorization(MatrixXd & A, MatrixXd & Q) {
     int m = A.rows();
     int n = A.cols();
