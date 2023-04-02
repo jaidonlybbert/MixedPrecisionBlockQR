@@ -13,7 +13,7 @@ VectorXd householder(VectorXd u) {
     return w;
 }
 
-void qr_factorization(MatrixXd A, MatrixXd Q, MatrixXd R) {
+void qr_factorization(MatrixXd & A, MatrixXd & Q) {
     int m = A.rows();
     int n = A.cols();
 
@@ -23,28 +23,43 @@ void qr_factorization(MatrixXd A, MatrixXd Q, MatrixXd R) {
         MatrixXd I = Eigen::MatrixXd::Identity(m - i, m - i);
 
         MatrixXd H_hat = I - 2 * w * w.transpose();
-
-        std::cout << H_hat << std::endl;
-        std::cout << H_hat << std::endl;
+        MatrixXd H(m, m);
+        for (int r = 0; r < m;  r++) {
+            for (int c = 0; c < n; c++) {
+                if (r == c && r < i) {
+                    H(r, c) = 1;
+                }
+                else if (r < i || c < i) {
+                    H(r, c) = 0;
+                }
+                else {
+                    H(r, c) = H_hat(r - i, c - i);
+                }
+            }
+        }
+        Q = Q * H;
+        A = H * A;
     }
 }
 
 int main()
 {
-    //MatrixXd A = MatrixXd::Random(3, 3);
     MatrixXd A{
         {0, 3, 1},
         {0, 4, -2},
         {2, 1, 1},
     };
+    MatrixXd rawA = A;
+
     Eigen::HouseholderQR<Eigen::MatrixXd> householderQR(A);
 
     int m = A.rows();
     int n = A.cols();
     MatrixXd Q = Eigen::MatrixXd::Identity(m, m);
-    MatrixXd R = Eigen::MatrixXd::Identity(m, m);
-    std::cout << A << std::endl;
-    qr_factorization(A, Q, R);
+    qr_factorization(A, Q);
+    MatrixXd diff = rawA - Q * A;
+    float error = diff.norm() / rawA.norm();
+    std::cout << error << std::endl;
 }
 
 
