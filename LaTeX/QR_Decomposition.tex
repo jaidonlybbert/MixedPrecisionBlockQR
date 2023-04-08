@@ -11,11 +11,12 @@
 \usepackage{graphicx} % Add pictures to your document
 \usepackage{listings} % Source code formatting and highlighting
 \usepackage{amssymb} % Extra math symbols
+%\usepackage{float} % float images
 % ---
 \graphicspath{{./images/}}
 %
 
-\title{Mixed-precision Block QR Decomposition on GPU}
+\title{QR Decomposition Algorithms}
 \author{Jaidon Lybbert, Fulin Li}
 \date{\today{}}
 
@@ -27,7 +28,7 @@
 \section{QR Decomposition}
 \paragraph{}
 The QR decomposition of an m-by-n matrix $A$ with $m>n$, is the matrix product $A = QR$, where $Q$ is an 
-m-by-n unitary matrix, and $R$ is upper triangular.
+m-by-n unitary matrix, and $R$ is upper triangular \cite{bhaskar86qr}.
 
 \subsection{Matrix Q}
 \paragraph{}
@@ -71,7 +72,7 @@ The Householder reflection is a unitary transformation represented by a matrix $
 	\label{eqn:Householder}
 H = I - 2\mathbf{ww}^T
 \end{equation}
-where $I\in\mathbb{R}^{N\times{}N}$ is the identity matrix. \cite{bhaskar86}
+where $I\in\mathbb{R}^{N\times{}N}$ is the identity matrix. \cite{bhaskar86householder} \cite{lambers21}
 
 \begin{figure}[h]
 \centering
@@ -93,13 +94,6 @@ H\mathbf{u} = \|\mathbf{u}\|\mathbf{\hat{v}},
 \end{equation}
 
 where $\mathbf{\hat{v}}$ is a unit vector in the direction of the target vector $\mathbf{v}$.
-
-\pagebreak
-\begin{figure}[h]
-\centering
-\includegraphics[width=140mm, angle=-90]{Householder3}
-\caption{QR factorization algorithm with Householder reflections}
-\end{figure}
 
 \subsubsection{Givens Rotations}
 \paragraph{}
@@ -128,7 +122,7 @@ where $c = \cos{\theta}$ and $s = \sin{\theta}$. Each of these examples have the
 
 \paragraph{}
 A Givens rotation can easily be computed to introduce zeros in the matrix $P$. The scalars $c$ and $s$ 
-can be computed directly from elements in $P$ in order to zero out targeted elements. For 
+can be computed directly from elements in $P$ in order to zero out targeted elements\cite{golub} \cite{bhaskar86givens}. For 
 example, say we want to zero out element $a_{21}$ in the matrix
 \begin{equation}
 P = 
@@ -151,13 +145,14 @@ s & c & 0\\
 \end{bmatrix}
 \end{equation}
 which will leave the third row of $P$ unmodified. We are aligning the column vector with the axis of the first 
-dimension, making the component of the vector along the second dimension zero. Below is a geometric 
+dimension, making the component of the vector along the second dimension zero. Fig. \ref{GivensFig} shows a geometric 
 illustration of the rotation.
 
-\begin{figure}[h]
+\begin{figure}
 \centering
 \includegraphics[width=75mm, angle=-90]{Givens1}
 \caption{Geometric illustration of the rotation of a vector in $\mathbb{R}^3$ about the axis of basis vector ${x3}$ to align with the basis vector ${x1}$. The result of this transformation is that the component of the transformed vector in the direction of the basis vector $x2$ is zero, corresponding to a zero introduced in the transformed matrix.}
+\label{GivensFig}
 \end{figure}
 
 \paragraph{}
@@ -236,7 +231,7 @@ the zero is introduced in the desired location.
 
 \subsubsection{WY-representation}
 
-For the factored form of $Q \in \mathbb{R}^{M \times M} = {Q_1}{Q_2}{\dots}{Q_i}{\dots}{Q_n}$ where $Q_i = {I_m} - {\beta{}_i}{v_i}{v_i}^T$ and the factors ${v_i, b_i}$ are stored as  
+For the factored form of $Q \in \mathbb{R}^{M \times M} = {Q_1}{Q_2}{\dots}{Q_i}{\dots}{Q_n}$ where $Q_i = {I_m} - {\beta{}_i}{v_i}{v_i}^T$ and the factors ${v_i}$, ${\beta{}_i}$ are stored as  
 
 \begin{equation}
 V \in \mathbb{R}^{M \times n} =
@@ -252,7 +247,7 @@ B \in \mathbb{R}^{n} =
 \end{bmatrix}
 \end{equation}
 
- the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$.
+ the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$ \cite{golub} \cite{doi:10.1137/19M1296367}.
 
 \paragraph{}
 Below is an implementation of the algorithm to compute W and Y, from V and B using Numpy in Python.
@@ -289,7 +284,7 @@ A^{(i)}=U_{i} \dots U_1A
 \end{equation}
 represent the i-th update of matrix A, so $A^{(N)}=R$ and $A^{(0)} = A$. Then the calculation of $U_i$ depends on the updated matrix $A^{(i-1)}$.
 \paragraph{}
-The householder QR algorithm procedure is to sequentially, and iteratively calculate each matrix $U_i$ from $A^{(i-1)}$, then update the matrix $A^{(i)} = U_iA^{(i-1)}$ for the next iteration, until $A^{(N)}=R$ is achieved. At each iteration, $U_i$ is determined such that the i-th column of $A^{(i-1)}$ is transformed so that all elements below the diagonal of the column are zero in the updated matrix $A^{(i)} = U_iA^{(i-1)}$.
+The householder QR algorithm procedure is to sequentially, and iteratively calculate each matrix $U_i$ from $A^{(i-1)}$, then update the matrix $A^{(i)} = U_iA^{(i-1)}$ for the next iteration, until $A^{(N)}=R$ is achieved. At each iteration, $U_i$ is determined such that the i-th column of $A^{(i-1)}$ is transformed so that all elements below the diagonal of the column are zero in the updated matrix $A^{(i)} = U_iA^{(i-1)}$ \cite{golub} \cite{doi:10.1137/19M1296367}.
 
 For example,
 
@@ -392,7 +387,7 @@ then $\mathbf{w}_i$ is obtained from $\mathbf{u}_i$ and $\mathbf{v}_i$ according
 Q can easily be computed by keeping a running matrix product according to \eqref{eqn:q} during the iterations of the algorithm.
 
 \paragraph{}
-A simplified Householder QR algorithm is given below, using the Numpy library in Python 3. A more complete implementation, factoring in edge cases is available on Github.
+A simplified Householder QR algorithm is given below, using the Numpy library in Python 3. A more complete implementation, factoring in edge cases is available on Github \cite{Github}.
 
 \begin{lstlisting}
 # Householder QR Decomposition
@@ -414,14 +409,14 @@ def householder_qr(A):
 \end{lstlisting}
 
 \paragraph{}
-The dependence of $U_i$ on $A^{(i-1)}$ limits the parallelism of the Householder QR algorithm. The matrix update portion $A^{(i)} = U_iA^{(i-1)}$ can be computed by parallel matrix multiply algorithms, however these operations are interspersed with the computation of the padded householder matrix $U_i$, which is highly sequential. If the parallel portions of this algorithm are implemented on a GPU, and the sequential portions on the host CPU, memory bandwidth and latency become a significant speed and efficiency bottleneck, as the data is passed back and forth between CPU memory and GPU memory.
+The dependence of $U_i$ on $A^{(i-1)}$ limits the parallelism of the Householder QR algorithm. The matrix update portion $A^{(i)} = U_iA^{(i-1)}$ can be computed by parallel matrix multiply algorithms, however these operations are interspersed with the computation of the padded householder matrix $U_i$, which is highly sequential. If the parallel portions of this algorithm are implemented on a GPU, and the sequential portions on the host CPU, memory bandwidth and latency become a significant speed and efficiency bottleneck, as the data is passed back and forth between CPU memory and GPU memory \cite{doi:10.1137/19M1296367} \cite{BISCHOFC1987TWrf}.
 
 \subsubsection{Block QR}
 \paragraph{}
- The Block QR algorithm reduces the memory workload by combining multiple householder transformations into a single matrix via the WY-representation of matrix products, before doing the matrix update.
+ The Block QR algorithm reduces the memory workload by combining multiple householder transformations into a single matrix via the WY-representation of matrix products, before doing the matrix update \cite{BISCHOFC1987TWrf}.
 
 \paragraph{}
-Returning to equation \eqref{eqn:r}, the Block QR algorithm splits the matrix $A \in\mathbb{R}^{M\times{}N}$ into $b = ceil(\frac{N}{n_b})$ panels $\{P_j \in \mathbb{R}^{M\times{}n_b} : 0 < j <= b\}$ of width $n_b$.
+Returning to equation \eqref{eqn:r}, the Block QR algorithm splits the matrix $A \in\mathbb{R}^{M\times{}N}$ into $b = ceil(\frac{N}{n_b})$ panels $\{P_j \in \mathbb{R}^{M\times{}n_b} : 0 < j <= b\}$ of width $n_b$ \cite{doi:10.1137/19M1296367}.
 
 \begin{equation}
 A = 
@@ -453,14 +448,10 @@ B_j \in \mathbb{R}^{n_b} =
 \end{bmatrix}
 \end{equation}
 
-At each iteration $j$ of the block QR algorithm, $U_j$ is computed by the W-Y representation, then the sub-matrix $A'^{(j)} \in \mathbb{R}^{(m - (j * n_b)) \times (n - (j * n_b))}$ is updated by $A'^{(j)} = U_{j}A'^{(j-1)}$.
+At each iteration $j$ of the block QR algorithm, $U_j$ is computed by the W-Y representation, then the sub-matrix $A'^{(j)} \in \mathbb{R}^{(m - (j * n_b)) \times (n - (j * n_b))}$ is updated by $A'^{(j)} = U_{j}A'^{(j-1)}$ \cite{doi:10.1137/19M1296367} \cite{golub}.
 
 \paragraph{}
 When $j = b$ then $(j * n_b) = N$, the width of sub-matrix $A'^{(j)}$ is zero, the matrix $A^{(j)} = A^{(n_b)} = R$, and the decomposition is complete.
-
-\subsubsection{Recursive Block QR}
-\subsubsection{Tiled QR}
-
 
 \bibliographystyle{plain}
 \bibliography{refs}
