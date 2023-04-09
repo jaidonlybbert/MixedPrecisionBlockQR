@@ -11,6 +11,8 @@
 \usepackage{graphicx} % Add pictures to your document
 \usepackage{listings} % Source code formatting and highlighting
 \usepackage{amssymb} % Extra math symbols
+\usepackage{algorithm}
+\usepackage{algorithmic}
 %\usepackage{float} % float images
 % ---
 \graphicspath{{./images/}}
@@ -24,11 +26,12 @@
 
 \maketitle{}
 \tableofcontents{}
+\listofalgorithms{}
 
 \section{QR Decomposition}
 \paragraph{}
 The QR decomposition of an m-by-n matrix $A$ with $m>n$, is the matrix product $A = QR$, where $Q$ is an 
-m-by-n unitary matrix, and $R$ is upper triangular \cite{bhaskar86qr}.
+m-by-m unitary matrix, and $R$ is upper triangular \cite{bhaskar86qr}.
 
 \subsection{Matrix Q}
 \paragraph{}
@@ -387,26 +390,22 @@ then $\mathbf{w}_i$ is obtained from $\mathbf{u}_i$ and $\mathbf{v}_i$ according
 Q can easily be computed by keeping a running matrix product according to \eqref{eqn:q} during the iterations of the algorithm.
 
 \paragraph{}
-A simplified Householder QR algorithm is given below, using the Numpy library in Python 3. A more complete implementation, factoring in edge cases is available on Github \cite{Github}.
+The Householder algorithm can be written concisely using the notation in \cite{}. For the matrix $A$, the notation $A_{k:m,k}$ is defined as the submatrix of A formed by the k-th through m-th rows of the k-th column. 
 
-\begin{lstlisting}
-# Householder QR Decomposition
-def householder_qr(A):
-    m,n = A.shape
-    Q,H = np.identity(m), np.identity(m)
 
-    for i in range(n):
-        u = A[i:,i]
-        v = np.zeros_like(u)
-        v[0] = np.linalg.norm(u)
-        w = (u - v) / np.linalg.norm(u - v)
-        H_hat = np.identity(m - i) - 2 * np.outer(w, w)
-        H = np.pad(H_hat, (i, 0))
-        H[np.diag_indices(i)] = 1
-        Q = Q.dot(H)
-        A = H.dot(A)
-    return Q,A
-\end{lstlisting}
+\begin{algorithm}
+\caption{Calculate $A = QR$ using Householder reflections}
+\label{alg1}
+\begin{algorithmic}
+\FOR{$k=1$ to $n$}
+\STATE{$u = A_{k:m,k}$}
+\STATE{$v_k = sign(u_1)\|u\|_{2}e_{1}+u$}
+\STATE{$v_k = v_k/\|v_{k}\|_{2}$}
+\STATE{$A_{k:m,k:n} = A_{k:m,k:n}-2v_{k}(v_{k}^{T}A_{k:m,k:n})$}
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+In Algorithm~\ref{alg1}, the householder vector $\mathbf{w}$ overwrites the vector $\mathbf{v}$. Recall, $U=H$ in \eqref{eqn:r} for the Householder QR algorithm. The multiplication of the orthogonal Householder matrix $U$ by $A$ in \eqref{eqn:r} is implicit in the last line of the for loop, where $A$ is distributed through \eqref{eqn:Householder}.
 
 \paragraph{}
 The dependence of $U_i$ on $A^{(i-1)}$ limits the parallelism of the Householder QR algorithm. The matrix update portion $A^{(i)} = U_iA^{(i-1)}$ can be computed by parallel matrix multiply algorithms, however these operations are interspersed with the computation of the padded householder matrix $U_i$, which is highly sequential. If the parallel portions of this algorithm are implemented on a GPU, and the sequential portions on the host CPU, memory bandwidth and latency become a significant speed and efficiency bottleneck, as the data is passed back and forth between CPU memory and GPU memory \cite{doi:10.1137/19M1296367} \cite{BISCHOFC1987TWrf}.
@@ -425,7 +424,7 @@ P_1 & P_2 & \cdots & P_b
 \end{bmatrix}
 \end{equation}
 
-For each panel, $n_b$ householder vectors $\{\mathbf{w}_k \in \mathbb{R}^M : 0 < k <= n_b\}$ are determined to form a transformation $U_j \in \mathbb{R}^{M\times M} = I - W_jY_j^T$ such that the set $\{U_j : 0 < j <= b\}$ satisfies \eqref{eqn:r}.
+For each panel, $n_b$ householder vectors $\{\mathbf{w}_k \in \mathbb{R}^M : 0 < k <= n_b\}$ are determined by performing the Householder QR decomposition on the panel, and saving the vectors $\mathbf{w}_k$ at each iteration to form a transformation $U_j \in \mathbb{R}^{M\times M} = I - W_jY_j^T$ using the WY transformation, such that the set $\{U_j : 0 < j <= b\}$ satisfies \eqref{eqn:r}.
 
 $W_j$ and $Y_j$ are computed using the Householder factors $\mathbf{w}_k$ and $\beta{}$ in the general householder equation $H = I - \beta{}\mathbf{w}\mathbf{w}^T$, where in our case $\beta = 2$ as in \eqref{eqn:Householder}.
 
@@ -452,6 +451,22 @@ At each iteration $j$ of the block QR algorithm, $U_j$ is computed by the W-Y re
 
 \paragraph{}
 When $j = b$ then $(j * n_b) = N$, the width of sub-matrix $A'^{(j)}$ is zero, the matrix $A^{(j)} = A^{(n_b)} = R$, and the decomposition is complete.
+
+\paragraph{}
+Using the same notation as in Algorithm \ref{alg1}, the Block Householder QR algorithm can be written concisely as
+\begin{algorithm}
+\label{blockqr}
+\caption{Block Householder QR Decomposition}
+\begin{algorithmic}
+
+\FOR{$k=1$ to $n$}
+\STATE{$u = A_{k:m,k}$}
+\STATE{$v_k = sign(u_1)\|u\|_{2}e_{1}+u$}
+\STATE{$v_k = v_k/\|v_{k}\|_{2}$}
+\STATE{$A_{k:m,k:n} = A_{k:m,k:n}-2v_{k}(v_{k}^{T}A_{k:m,k:n})$}
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
 
 \bibliographystyle{plain}
 \bibliography{refs}
