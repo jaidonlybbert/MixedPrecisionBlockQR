@@ -253,25 +253,21 @@ B \in \mathbb{R}^{n} =
  the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$ \cite{golub} \cite{doi:10.1137/19M1296367}.
 
 \paragraph{}
-Below is an implementation of the algorithm to compute W and Y, from V and B using Numpy in Python.
+The algorithm is as follows.
 
-\begin{lstlisting}
-def wy_representation(V, B):
-    m = len(V[0])
-    r = len(V)
-
-    Y = np.array(V[0]).reshape(m, 1)
-    W = np.array(B[0]*V[0]).reshape(m, 1)
-
-    for i in range(1, r):
-        z = B[i] * np.dot((np.identity(m) - 
-			      np.matmul(W, np.transpose(Y))), V[i])
-        z = z.reshape(m, 1)
-        W = np.concatenate((W, z), axis=1)
-        Y = np.concatenate((Y, V[i].reshape(m, 1)), axis=1)
-    
-    return W, Y
-\end{lstlisting}
+\begin{algorithm}
+\caption{Calculate W, Y from the factored form of Q: $V$ and $B$}
+\label{wy}
+\begin{algorithmic}
+\STATE{$Y = v^{(1)}$}
+\STATE{$W = \beta_{1}v^{(1)}$}
+\FOR{$j=2$ to $r$}
+\STATE{$z = \beta_j(I_m-WY^T)v^{(j)}$}
+\STATE{$W = [W|z]$}
+\STATE{$Y = [Y|v^{(j)}]$}
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
 
 \subsection{Algorithms}
 \subsubsection{Householder QR}
@@ -458,13 +454,21 @@ Using the same notation as in Algorithm \ref{alg1}, the Block Householder QR alg
 \label{blockqr}
 \caption{Block Householder QR Decomposition}
 \begin{algorithmic}
-
+\STATE{$Q=I_m$}
+\STATE{$\lambda = 1$}
+\STATE{$k = 0$}
+\WHILE{$\lambda \leq n$}
+\STATE{$\tau \leftarrow min(\lambda + r - 1, n)$}
+\STATE{$k = k + 1$}
 \FOR{$k=1$ to $n$}
 \STATE{$u = A_{k:m,k}$}
 \STATE{$v_k = sign(u_1)\|u\|_{2}e_{1}+u$}
 \STATE{$v_k = v_k/\|v_{k}\|_{2}$}
 \STATE{$A_{k:m,k:n} = A_{k:m,k:n}-2v_{k}(v_{k}^{T}A_{k:m,k:n})$}
 \ENDFOR
+
+
+\ENDWHILE
 \end{algorithmic}
 \end{algorithm}
 
