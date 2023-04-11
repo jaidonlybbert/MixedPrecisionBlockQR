@@ -46,7 +46,7 @@ is a combination of rotations and reflections.
 \paragraph{}
 The matrix $R$ is upper triangular, a form which has the following useful properties: (I) the determinant is equal to the product of the diagonal elements, (II) the eigenvalues are equal to the diagonal elements, (III) given the linear system $Rx = b$ it is easy to solve for $x$ by back substitution.
 
-\section{Computation}
+\section{Transformations}
 \paragraph{}
 In order to compute the decomposition of $A$, the matrix is iteratively transformed by unitary matrices $\{U_i : 0 < i < k\}$ until the product is upper triangular. This upper triangular matrix is the matrix $R$ in $A = QR$
 \begin{equation}
@@ -67,8 +67,7 @@ A^{(i)} = U_{i} \dots U_1A,
 \end{equation}
 and can iteratively be applied to achieve $R$. Two choices for $U_i$ are Householder reflections, and Givens rotations.
 
-\subsection{Transformations}
-\subsubsection{Householder Reflections}
+\subsection{Householder Reflections}
 \paragraph{}
 The Householder reflection is a unitary transformation represented by a matrix $H\in\mathbb{R}^{N\times{}N}$ which reflects a vector $\mathbf{u}\in\mathbb{R}^N$ across a hyperplane defined by its unit normal vector $\{\mathbf{w}\in\mathbb{R}^N: \|\mathbf{w}\|=1\}$. The transformation matrix is given by
 \begin{equation}
@@ -98,7 +97,7 @@ H\mathbf{u} = \|\mathbf{u}\|\mathbf{\hat{v}},
 
 where $\mathbf{\hat{v}}$ is a unit vector in the direction of the target vector $\mathbf{v}$.
 
-\subsubsection{Givens Rotations}
+\subsection{Givens Rotations}
 \paragraph{}
 A Givens rotation is a unitary transformation which rotates a vector $x$ counter-clockwise in a chosen plane. For example, possible Givens rotation matrices in $\mathbb{R}^4$ include
 \begin{equation}
@@ -232,45 +231,10 @@ a_{31} & a_{32} & a_{33}
 \end{equation}
 the zero is introduced in the desired location.
 
-\subsubsection{WY-representation}
 
-For the factored form of $Q \in \mathbb{R}^{M \times M} = {Q_1}{Q_2}{\dots}{Q_i}{\dots}{Q_n}$ where $Q_i = {I_m} - {\beta{}_i}{v_i}{v_i}^T$ and the factors ${v_i}$, ${\beta{}_i}$ are stored as  
 
-\begin{equation}
-V \in \mathbb{R}^{M \times n} =
-\begin{bmatrix}
-\mathbf{w}_1 & \mathbf{w}_2 & \cdots & \mathbf{w}_{n}
-\end{bmatrix}
-\end{equation}
-
-\begin{equation}
-B \in \mathbb{R}^{n} = 
-\begin{bmatrix}
-\beta{}_1 & \beta{}_2 & \cdots & \beta{}_{n}
-\end{bmatrix}
-\end{equation}
-
- the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$ \cite{golub} \cite{doi:10.1137/19M1296367}.
-
-\paragraph{}
-The algorithm is as follows.
-
-\begin{algorithm}
-\caption{Calculate W, Y from the factored form of Q: $V$ and $B$}
-\label{wy}
-\begin{algorithmic}
-\STATE{$Y = v^{(1)}$}
-\STATE{$W = \beta_{1}v^{(1)}$}
-\FOR{$j=2$ to $r$}
-\STATE{$z = \beta_j(I_m-WY^T)v^{(j)}$}
-\STATE{$W = [W|z]$}
-\STATE{$Y = [Y|v^{(j)}]$}
-\ENDFOR
-\end{algorithmic}
-\end{algorithm}
-
-\subsection{Algorithms}
-\subsubsection{Householder QR}
+\section{Algorithms}
+\subsection{Householder QR}
 \paragraph{}
 In order to get the upper triangular matrix $R \in\mathbb{R}^{N\times{}N}$ given a matrix $A \in\mathbb{R}^{M\times{}N}$ using householder reflections, we can use \eqref{eqn:r}, where the set of unitary transformations is a set of padded householder matrices $\{U_i\in\mathbb{R}^{M\times{}M} : 0 < i < N\}$, so that,
 \begin{equation}
@@ -283,7 +247,7 @@ A^{(i)}=U_{i} \dots U_1A
 \end{equation}
 represent the i-th update of matrix A, so $A^{(N)}=R$ and $A^{(0)} = A$. Then the calculation of $U_i$ depends on the updated matrix $A^{(i-1)}$.
 \paragraph{}
-The householder QR algorithm procedure is to sequentially, and iteratively calculate each matrix $U_i$ from $A^{(i-1)}$, then update the matrix $A^{(i)} = U_iA^{(i-1)}$ for the next iteration, until $A^{(N)}=R$ is achieved. At each iteration, $U_i$ is determined such that the i-th column of $A^{(i-1)}$ is transformed so that all elements below the diagonal of the column are zero in the updated matrix $A^{(i)} = U_iA^{(i-1)}$ \cite{golub} \cite{doi:10.1137/19M1296367}.
+The householder QR algorithm procedure is to iteratively calculate each matrix $U_i$ from $A^{(i-1)}$, then update the matrix $A^{(i)} = U_iA^{(i-1)}$ for the next iteration, until $A^{(N)}=R$ is achieved. At each iteration, $U_i$ is determined such that the i-th column of $A^{(i-1)}$ is transformed so that all elements below the diagonal of the column are zero in the updated matrix $A^{(i)} = U_iA^{(i-1)}$ \cite{golub} \cite{doi:10.1137/19M1296367}.
 
 For example,
 
@@ -392,7 +356,7 @@ The Householder algorithm can be written concisely using the notation in \cite{}
 \begin{algorithm}
 \caption{Calculate $A = QR$ using Householder reflections}
 \label{alg1}
-\begin{algorithmic}
+\begin{algorithmic}[1]
 \FOR{$k=1$ to $n$}
 \STATE{$u = A_{k:m,k}$}
 \STATE{$v_k = sign(u_1)\|u\|_{2}e_{1}+u$}
@@ -401,12 +365,70 @@ The Householder algorithm can be written concisely using the notation in \cite{}
 \ENDFOR
 \end{algorithmic}
 \end{algorithm}
-In Algorithm~\ref{alg1}, the householder vector $\mathbf{w}$ overwrites the vector $\mathbf{v}$. Recall, $U=H$ in \eqref{eqn:r} for the Householder QR algorithm. The multiplication of the orthogonal Householder matrix $U$ by $A$ in \eqref{eqn:r} is implicit in the last line of the for loop, where $A$ is distributed through \eqref{eqn:Householder}.
+In Algorithm~\ref{alg1}, the householder vector $\mathbf{w}$ overwrites the vector $\mathbf{v}$. Recall, $U=H$ in \eqref{eqn:r} for the Householder QR algorithm. The transformation of $A$ by the orthogonal Householder matrix $U$ in \eqref{eqn:r} is implicit in the last line of the for loop, where $A$ is distributed through \eqref{eqn:Householder}.
+
+\subsubsection{FLOPS}
+\paragraph{}
+We count the average FLOPS in \ref{alg1} line-by-line in the inner loop, and multiply by N columns of the outer loop.
+
+\textbf{Line 2}
+The copy operation is realized by a for-loop iterating over the copied column. On average, the length of this column is $m/2$, so the contribution is $N * M / 2$ FLOPs.
+
+\textbf{Line 3}
+The calculation of the magnitude of vector u takes an average M / 2 FLOPs, which is added to an additional M FLOPs for the multiply-accumulate into $v_k$ for a total contribution of $3 * N * M / 2$ FLOPs.
+
+\textbf{Line 4}
+Again, the magnitude of vector $v_k$ requires an average M / 2 FLOPs, and the division adds another M / 2 FLOPs. The total contribution is $N * M$ FLOPs.
+
+\textbf{Line 5}
+The vector matrix product $(v_{k}^{T}A_{k:m,k:n})$ consists of a vector matrix product contributing $$\frac{1}{N} \sum_{k=0}^N (M-k)(N-k)$$ FLOPs on average. The following vector-vector product $v_{k}(v_{k}^{T}A_{k:m,k:n})$ contributes the same number of FLOPs.
+
+\subsubsection{Parallelism}
+\paragraph{}
+The dependence of $U_i$ on $A^{(i-1)}$ limits the parallelism of the Householder QR algorithm, such that the outer loop of Algorithm~\ref{alg1} can't be parallelized, and we must repeat lines 2-5, for each of N columns.
+
+The matrix update portion $A_{k:m,k:n} = A_{k:m,k:n}-2v_{k}(v_{k}^{T}A_{k:m,k:n})$ can be computed by parallel matrix multiply algorithms, however these operations are interspersed with the computation of the padded householder matrix $U_i$, which is highly sequential. If the parallel portions of this algorithm are implemented on a GPU, and the sequential portions on the host CPU, memory bandwidth and latency become a significant speed and efficiency bottleneck, as the data is passed back and forth between CPU memory and GPU memory \cite{doi:10.1137/19M1296367} \cite{BISCHOFC1987TWrf}.
+
+\subsection{WY-representation}
+
+For the factored form of $Q \in \mathbb{R}^{M \times M} = {Q_1}{Q_2}{\dots}{Q_i}{\dots}{Q_n}$ where $Q_i = {I_m} - {\beta{}_i}{v_i}{v_i}^T$ and the factors ${v_i}$, ${\beta{}_i}$ are stored as  
+
+\begin{equation}
+V \in \mathbb{R}^{M \times n} =
+\begin{bmatrix}
+\mathbf{w}_1 & \mathbf{w}_2 & \cdots & \mathbf{w}_{n}
+\end{bmatrix}
+\end{equation}
+
+\begin{equation}
+B \in \mathbb{R}^{n} = 
+\begin{bmatrix}
+\beta{}_1 & \beta{}_2 & \cdots & \beta{}_{n}
+\end{bmatrix}
+\end{equation}
+
+ the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$ \cite{golub} \cite{doi:10.1137/19M1296367}.
 
 \paragraph{}
-The dependence of $U_i$ on $A^{(i-1)}$ limits the parallelism of the Householder QR algorithm. The matrix update portion $A^{(i)} = U_iA^{(i-1)}$ can be computed by parallel matrix multiply algorithms, however these operations are interspersed with the computation of the padded householder matrix $U_i$, which is highly sequential. If the parallel portions of this algorithm are implemented on a GPU, and the sequential portions on the host CPU, memory bandwidth and latency become a significant speed and efficiency bottleneck, as the data is passed back and forth between CPU memory and GPU memory \cite{doi:10.1137/19M1296367} \cite{BISCHOFC1987TWrf}.
+The algorithm is as follows.
 
-\subsubsection{Block QR}
+\begin{algorithm}
+\caption{Calculate W, Y from the factored form of Q: $V$ and $B$}
+\label{wy}
+\begin{algorithmic}
+\STATE{$Y = v^{(1)}$}
+\STATE{$W = \beta_{1}v^{(1)}$}
+\FOR{$j=2$ to $r$}
+\STATE{$z = \beta_j(I_m-WY^T)v^{(j)}$}
+\STATE{$W = [W|z]$}
+\STATE{$Y = [Y|v^{(j)}]$}
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+
+
+\subsection{Block QR}
 \paragraph{}
  The Block QR algorithm reduces the memory workload by combining multiple householder transformations into a single matrix via the WY-representation of matrix products, before doing the matrix update \cite{BISCHOFC1987TWrf}.
 
@@ -460,13 +482,7 @@ Using the same notation as in Algorithm \ref{alg1}, the Block Householder QR alg
 \WHILE{$\lambda \leq n$}
 \STATE{$\tau \leftarrow min(\lambda + r - 1, n)$}
 \STATE{$k = k + 1$}
-\FOR{$k=1$ to $n$}
-\STATE{$u = A_{k:m,k}$}
-\STATE{$v_k = sign(u_1)\|u\|_{2}e_{1}+u$}
-\STATE{$v_k = v_k/\|v_{k}\|_{2}$}
-\STATE{$A_{k:m,k:n} = A_{k:m,k:n}-2v_{k}(v_{k}^{T}A_{k:m,k:n})$}
-\ENDFOR
-
+\STATE{$A_{\lambda:m,\lambda:\tau} \leftarrow Householder\_qr(A_{\lambda:m,\lambda:\tau})$}
 
 \ENDWHILE
 \end{algorithmic}

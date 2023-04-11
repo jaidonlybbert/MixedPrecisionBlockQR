@@ -14,7 +14,7 @@ void householder_qr(float *dev_A, int m, int n) {
     */
 
     // TODO: Copy A from global memory to shared memory
-        //https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#shared-memory
+      //https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#shared-memory
     dim3 GridDim(1, 1, 1);
     dim3 BlockDim(m, n, 1);
 
@@ -29,7 +29,7 @@ void householder_qr(float *dev_A, int m, int n) {
             break;
         }
 
-        // Copy the column as u
+        // Copy the column as u - can be done in parallel
         int len = m - k;
         float* u = (float*)malloc((len) * sizeof(float));
         for (int i = 0; i < len; i++) {
@@ -65,10 +65,10 @@ void householder_qr(float *dev_A, int m, int n) {
         }
 
         /*
-        * Update trailing matrix : A_k:m, k : n = A_k : m, k : n - 2V((V ^ T)(A_k:m, k : n)
+        * Update trailing matrix : A_k:m, k : n = A_k:m,k:n - 2V((V ^ T)(A_k:m, k : n)
         */
 
-        // (V^T)(A_k:m,k:n)
+        // (V^T)(A_k:m,k:n) - vector matrix product
         float* temp = (float*)malloc((n - k) * sizeof(float));
         for (int col = k; col < n; col++) {
             float inner_product = 0;
@@ -78,7 +78,7 @@ void householder_qr(float *dev_A, int m, int n) {
             temp[col-k] = inner_product;
         }
         
-        // (V)(V^T)(A_k:m,k:n)
+        // (A_k:m,k:n) - 2 * (V)(V^T)(A_k:m,k:n)
         float* temp2 = (float*)malloc((n - k) * (m - k) * sizeof(float));
         for (int row = k; row < m; row++) {
             for (int col = k; col < n; col++) {
