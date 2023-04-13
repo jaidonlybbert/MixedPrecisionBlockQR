@@ -391,37 +391,34 @@ The matrix update portion $A_{k:m,k:n} = A_{k:m,k:n}-2v_{k}(v_{k}^{T}A_{k:m,k:n}
 
 \subsection{WY-representation}
 
-For the factored form of $Q \in \mathbb{R}^{M \times M} = {Q_1}{Q_2}{\dots}{Q_i}{\dots}{Q_n}$ where $Q_i = {I_m} - {\beta{}_i}{v_i}{v_i}^T$ and the factors ${v_i}$, ${\beta{}_i}$ are stored as  
+For the factored form of $Q \in \mathbb{R}^{M \times M} = {Q_1}{Q_2}{\dots}{Q_j}{\dots}{Q_n}$ where $Q_j = {I_m} - {\beta{}_j}{\mathbf{w}_j}{\mathbf{w}_j}^T$ and the factors ${\mathbf{w}_j}$, ${\beta{}_j}$ are stored as  
 
 \begin{equation}
 V \in \mathbb{R}^{M \times n} =
 \begin{bmatrix}
-\mathbf{w}_1 & \mathbf{w}_2 & \cdots & \mathbf{w}_{n}
+\mathbf{w}_1 & \mathbf{w}_2 & \cdots & \mathbf{w}_j & \cdots & \mathbf{w}_{n}
 \end{bmatrix}
 \end{equation}
 
 \begin{equation}
 B \in \mathbb{R}^{n} = 
 \begin{bmatrix}
-\beta{}_1 & \beta{}_2 & \cdots & \beta{}_{n}
+\beta{}_1 & \beta{}_2 & \cdots & \beta{}_{j} & \cdots & \beta{}_{n}
 \end{bmatrix}
 \end{equation}
 
- the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$ \cite{golub} \cite{doi:10.1137/19M1296367}.
-
-\paragraph{}
-The algorithm is as follows.
+ the W and Y factors such that $Q = I_m - {W}{Y}^T$ can be calculated from $V$, and $B$ \cite{golub} \cite{doi:10.1137/19M1296367}. See Algorithm \ref{wy}.
 
 \begin{algorithm}
 \caption{Calculate W, Y from the factored form of Q: $V$ and $B$}
 \label{wy}
-\begin{algorithmic}
-\STATE{$Y = v^{(1)}$}
-\STATE{$W = \beta_{1}v^{(1)}$}
+\begin{algorithmic}[1]
+\STATE{$Y = \mathbf{w}_{1}$}
+\STATE{$W = \beta_{1}\mathbf{w}_{1}$}
 \FOR{$j=2$ to $r$}
-\STATE{$z = \beta_j(I_m-WY^T)v^{(j)}$}
+\STATE{$z = \beta_j(I_m-WY^T)\mathbf{w}_{j}$}
 \STATE{$W = [W|z]$}
-\STATE{$Y = [Y|v^{(j)}]$}
+\STATE{$Y = [Y|\mathbf{w}_{j}]$}
 \ENDFOR
 \end{algorithmic}
 \end{algorithm}
@@ -475,7 +472,7 @@ Using the same notation as in Algorithm \ref{alg1}, the Block Householder QR alg
 \begin{algorithm}
 \label{blockqr}
 \caption{Block Householder QR Decomposition}
-\begin{algorithmic}
+\begin{algorithmic}[1]
 \STATE{$Q=I_m$}
 \STATE{$\lambda = 1$}
 \STATE{$k = 0$}
@@ -483,6 +480,10 @@ Using the same notation as in Algorithm \ref{alg1}, the Block Householder QR alg
 \STATE{$\tau \leftarrow min(\lambda + r - 1, n)$}
 \STATE{$k = k + 1$}
 \STATE{$A_{\lambda:m,\lambda:\tau} \leftarrow Householder\_qr(A_{\lambda:m,\lambda:\tau})$}
+\STATE{$W_k, Y_k \leftarrow WY\_transform(V_k)$}
+\STATE{$A_{\lambda:m, \tau + 1:n} = (I - W_{k}Y_{k}^T)^TA_{\lambda:m, \tau + 1:n}$}
+\STATE{$Q_{:,\lambda:m} = Q_{:,\lambda:m}(I - W_{k}Y_{k}^T)$}
+\STATE{$\lambda = \tau + 1$}
 
 \ENDWHILE
 \end{algorithmic}
