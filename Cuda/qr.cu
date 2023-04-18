@@ -1,3 +1,30 @@
+/*
+Copyright (c) 2023 Jaidon Lybbert
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
+
+/*
+* CUDA implementation of the Block QR decomposition algorithm
+*/
+
+
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
 #include <cstdlib>
@@ -7,7 +34,7 @@
 #include <string>
 
 __global__ 
-void householder_qr(float *dev_A, float *dev_Q, int m, int n, int global_offset) {
+void householder_qr(float *dev_A, int m, int n, int global_offset) {
     /*
     * Computes the QR decomposition of A using Householder reflectors.
     * 
@@ -111,17 +138,15 @@ void cpy_to_smem(float* dev_A, int m, int n) {
 
 void h_wy_transform(float* h_A, int m, int n, int global_offset, int panel_width)
 {
-    float* Q = (float*)malloc(m - global_offset);
-
-    float* W = (float*)malloc((m - global_offset) * panel_width);
-    float* Y = (float*)malloc((m - global_offset) * panel_width);
-    float* z = (float*)malloc(m - global_offset);
-    float* W_Yt = (float*)malloc((m - global_offset) * (m - global_offset)); // temporary matrix W * Y^T
+    float* W = (float*)malloc((m - global_offset) * panel_width * sizeof(float));
+    float* Y = (float*)malloc((m - global_offset) * panel_width * sizeof(float));
+    float* z = (float*)malloc((m - global_offset) * sizeof(float));
+    float* W_Yt = (float*)malloc((m - global_offset) * (m - global_offset) * sizeof(float)); // temporary matrix W * Y^T
 
     // Y = w_1
     for (int i = 0; i < m - global_offset; i++) {
-        Y[i * panel_width] = h_A[(i + global_offset) * n + global_offset];
-        W[i * panel_width] = 2 * h_A[(i + global_offset) * n + global_offset];
+        Y[i * panel_width] = h_A[(i + global_offset + 1) * n + global_offset];
+        W[i * panel_width] = 2 * h_A[(i + global_offset + 1) * n + global_offset];
     }
 
     // Iterate over columns of panel and update W, Y
@@ -133,14 +158,14 @@ void h_wy_transform(float* h_A, int m, int n, int global_offset, int panel_width
             for (int col = 0; col < m - global_offset; col++) { // cols of W_Yt
                 // compute each inner product
                 float inner_product = 0;
-                for (int idx = 0; idx < panel_width; idx++) { // rows of W
-                    inner_product += W[row * panel_width + idx] * Y[row * panel_width + idx];
+                for (int idx = 0; idx < i; idx++) { // rows of W
+                    inner_product += W[row * panel_width + idx] * Y[col * panel_width + idx];
                 }
                 if (row == col) { // Im is 1
                     W_Yt[row * (m - global_offset) + col] = 1 - inner_product; // Im - WY^T
                 }
                 else { // Im is zero
-                    W_Yt[row * (m - global_offset) + col] = inner_product;
+                    W_Yt[row * (m - global_offset) + col] = -inner_product;
                 }
             }
         }
@@ -148,19 +173,24 @@ void h_wy_transform(float* h_A, int m, int n, int global_offset, int panel_width
         // 2 * (Im - WY^T)w_i (matrix-vector product)
         for (int row = 0; row < (m - global_offset); row++) {
             float inner_product = 0;
-            for (int col = 0; col < (m - global_offset); col++) {
-                inner_product += W_Yt[row * (m - global_offset) + col] * h_A[(global_offset + i + col) * n + global_offset + i];
+            for (int col = i; col < (m - global_offset); col++) {
+                inner_product += W_Yt[row * (m - global_offset) + col] * h_A[(global_offset + col + 1) * n + global_offset + i];
             }
             z[row] = 2 * inner_product;
         }
 
         // Copy z to W
         for (int idx = 0; idx < (m - global_offset); idx++) {
+            if (idx < (i)) {
+                Y[idx * panel_width + i] = 0;
+            }
+            else {
+                Y[idx * panel_width + i] = h_A[(global_offset + idx + 1) * n + global_offset + i];
+            }
             W[idx * panel_width + i] = z[idx];
         }
     }
 
-    free(Q);
     free(W);
     free(Y);
     free(z);
@@ -260,7 +290,6 @@ void test_householder();
 
 int main() {
     test_householder();
-    test_wy_transform();
 }
 //
 //__global__
@@ -298,9 +327,16 @@ void block_qr(float* dev_A, float* dev_Q, int m, int n, int r) {
         dim3 GridDim(1, 1, 1);
         dim3 BlockDim(m, n, 1);
 
-        householder_qr<<<GridDim, BlockDim>>>(dev_A, dev_Q, m, n, lambda);
+        householder_qr<<<GridDim, BlockDim>>>(dev_A, m, n, lambda);
 
-        apply_qt<<<GridDim, BlockDim>>>(dev_A, dev_Q, m, n, tau);
+        cudaDeviceSynchronize();
+
+        // Q is stored in factored form in lower triangular portion of dev_A
+        // R is stored in upper triangular portion of dev_A
+        apply_qt<<<GridDim, BlockDim>>>(dev_A, m, n, tau);
+
+        cudaDeviceSynchronize();
+
         // increment panel offset
     }
 }
@@ -372,6 +408,8 @@ void test_householder() {
     cudaMemcpy(h_A_out, dev_A, (m+1) * n * sizeof(float), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_Q_out, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
 
+    h_wy_transform(h_A_out, m, n, 0, n);
+
     // Print input A
     printf("Input A:\n");
     for (int i = 0; i < m; i++) {
@@ -404,4 +442,8 @@ void test_householder() {
 
     printf("Backward error: ||A-QR||/||A|| = %f\n", backward_err);
     printf("Finished\n");
+}
+
+void h_block_qr() {
+
 }
