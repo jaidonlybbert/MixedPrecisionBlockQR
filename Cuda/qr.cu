@@ -36,6 +36,10 @@ SOFTWARE.
 #include <fstream>
 #include <string>
 
+void h_householder_qr(float* A, float* Q, int m, int n) {
+    // TASK: implement overloaded householder function, which returns Q matrix by reference
+    // (rather than embedding householder vectors in lower triangular part of A)
+} 
 
 void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width) {
     /*
@@ -238,11 +242,11 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
         u[0] = sign * mag + u[0]; // v overwrites u
         // Normalize
         mag = 0;
-        for (int i = 0; i < len; i++) {
+        for (int i = 0; i < len; i++) { // TASK: implement parallel algorithm in CUDA to replace for loop
             mag += u[i] * u[i];
         }
         mag = sqrtf(mag);
-        for (int i = 0; i < len; i++) {
+        for (int i = 0; i < len; i++) { // TASK: implement parallel algorithm in CUDA to replace for loop
             u[i] /= mag; // w_k overwrites v, here u = w_k = v_k = householder vector
         }
 
@@ -252,7 +256,7 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
 
         // (V^T)(A_k:m,k:n) - vector matrix product
         float* temp = (float*)malloc((n - k) * sizeof(float));
-        for (int col = k; col < n; col++) {
+        for (int col = k; col < n; col++) { // TASK: implement parallel algorithm in CUDA to replace for loop
             float inner_product = 0;
             for (int row = k; row < m; row++) {
                 inner_product += u[row - k] * dev_A[row * n + col];
@@ -262,7 +266,7 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
         
         // (A_k:m,k:n) - 2 * (V)(V^T)(A_k:m,k:n)
         float* temp2 = (float*)malloc((n - k) * (m - k) * sizeof(float));
-        for (int row = k; row < m; row++) {
+        for (int row = k; row < m; row++) { // TASK: implement parallel algorithm in CUDA to replace for loop
             for (int col = k; col < n; col++) {
                 temp2[(row - k) * (n - k) + (col - k)] = u[row-k] * temp[col-k];
                 dev_A[row * n + col] = dev_A[row * n + col] - 2 * temp2[(row - k) * (n - k) + (col - k)];
@@ -270,7 +274,7 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
         }
 
         // Copy householder vector (vk) to lower triangular portion of A
-        for (int row = k + 1; row < k + len + 1; row++) {
+        for (int row = k + 1; row < k + len + 1; row++) { // TASK: implement parallel algorithm in CUDA to replace for loop
             dev_A[row * n + k] = u[row - k - 1];
         }
 
@@ -280,24 +284,27 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
     }
 }
 
-void test_h_wy_transform() { // todo
-    int m = 3;
-    int n = 3;
+float* h_generate_random_matrix(int height, int width) {
+    /*
+    * Returns pointer to random float matrix of dimensions HeightxWidth
+    */
 
-    // Initialize test matrix A input on Host
-    float h_A_in[3][3] = {
-        {12, -51, 4},
-        {6, 167, -68},
-        {-4, 24, -41},
-    };
+    float* matrix = (float*)malloc(height * width * sizeof(float));
 
-    float* h_A_out = (float*)malloc((m + 1) * n * sizeof(float)); // extra row gives room for storing householder vectors in lower triangular portion of A
-    float* h_Q_out = NULL;
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            matrix[row * width + col] = 0; // TASK: randomize this number
+        }
+    }
 
-    h_wy_transform((float*)h_A_in, &h_Q_out, m, n, 0, n);
+    return matrix;
 }
 
 void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** matrix) {
+    /*
+    * Reads text file containing jacobian matrices from the Euroc dataset, and returns pointer to matrix
+    */
+
     std::ifstream fin;
 
     std::string line;
@@ -411,19 +418,6 @@ void dev_block_qr(float* dev_A, float* dev_Q, int m, int n, int r) {
     }
 }
 
-void test_qr_result(int n, int m) {
-    // Create random matrix A widthxheight
-
-    // Start timer
-    // Call cuda QR decomposition on A -> Q, R
-    // End timer
-
-    // Perform backward error calc ||A - QR||/||A||
-
-    // Print error
-    // Print FLOPs = 4(m^2*n - mn^2 + n^3/3) / time
-}
-
 void test_dev_householder_qr() {
     int rows, cols;
     double* mtx;
@@ -456,12 +450,16 @@ void test_dev_householder_qr() {
     // Call kernel to collaboratively copy input matrix from Global memory to Shared memory
     dim3 DimGrid(1, 1, 1);
     dim3 DimBlock(1, 1, 1);
+    // TASK: Time execution of the following kernel call
     dev_householder_qr << <DimGrid, DimBlock >> > (dev_A, m, n, 0);
 
     cudaDeviceSynchronize();
 
     cudaMemcpy(h_A_out, dev_A, (m+1) * n * sizeof(float), cudaMemcpyDeviceToHost);
     cudaMemcpy(h_Q_out, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // TASK: Compute error
+    // TASK: Write results to log file
 
     //h_wy_transform(h_A_out, m, n, 0, n);
 
@@ -511,6 +509,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
                 A[row * n + col] = inner_product;
             }
         }
+        free(A_old);
 
         // Update global Q
         float* Q_old = (float*)malloc(m * m * sizeof(float)); 
@@ -524,6 +523,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
                 Q[row * m + col] = inner_product;
             }
         }
+        free(Q_old);
 
         // increment panel offset
         lambda = tau;
@@ -606,8 +606,29 @@ void h_strip_R_from_A(float* A, float* R, int m, int n) {
     }
 }
 
-void h_backward_error(float* A, float* R, float* Q, int m, int n) {
+float h_backward_error(float* A, float* R, float* Q, int m, int n) {
+    // Computes || A - QR||/||A ||
 
+    float* QR = (float*)malloc(m * n * sizeof(float));
+    float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
+    
+    h_mmult((float*)Q, R, QR, m, n, m);
+    h_matrix_subtract((float*)A, QR, A_sub_QR, m, n);
+
+    float backward_error = (h_matrix_norm(A_sub_QR, m, n) / h_matrix_norm((float*)A, m, n));
+
+    free(QR);
+    free(A_sub_QR);
+
+    return backward_error;
+}
+
+float h_error_2() {
+    // TASK: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
+}
+
+float h_error_3() {
+    // TASK: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
 }
 
 void test_h_mmult() {
@@ -631,6 +652,7 @@ void test_h_householder_qr() {
     * Test host version of householder QR
     */
 
+    // TASK: iterate over many matrix sizes, & test matrices from Tong
     printf("\nTesting sequential householder QR...\n");
 
     float A_in[6][6] = {
@@ -648,9 +670,7 @@ void test_h_householder_qr() {
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
-    float* QR = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m+1) * n * sizeof(float));
-    float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
@@ -661,19 +681,62 @@ void test_h_householder_qr() {
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
-    //|| A - QR||/||A ||
-    h_mmult((float*)Q, R, QR, m, n, m);
-    h_matrix_subtract((float*)A_in, QR, A_sub_QR, m, n);
-    float backward_error = h_matrix_norm(A_sub_QR, m, n) / h_matrix_norm((float*)A_in, m, n);
-
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+    printf("Backward error: %f\n", backward_error);
     printf("Sequential householder QR finished...\n");
-    printf("Backward error: %f", backward_error);
 
+    // TASK: write results to log file
+    
     free(Q);
     free(R);
-    free(QR);
-    free(A_sub_QR);
     free(A_out);
+}
+
+
+void test_h_wy_transform() {
+    // Initialize test matrix A input on Host
+    // TASK: iterate over many matrix sizes
+    int m = 3;
+    int n = 3;
+
+    // TASK: use h_generate_random_matrix to randomize input matrix
+    float h_A_in[3][3] = {
+        {12, -51, 4},
+        {6, 167, -68},
+        {-4, 24, -41},
+    };
+
+    float* h_A_out = (float*)malloc((m + 1) * n * sizeof(float)); // extra row (m+1) gives room for storing householder vectors in lower triangular portion of A
+    float* h_R = (float*)malloc(m * n * sizeof(float));
+    float* h_Q_out = NULL; // pointer to Q is returned by h_wy_transform
+
+    // TASK: how can we test wy_transform without depending on using QR function?
+    h_householder_qr((float*)h_A_in, m, n, 0, n);
+
+    h_wy_transform((float*)h_A_out, &h_Q_out, m, n, 0, n);
+
+    h_strip_R_from_A(h_A_out, h_R, m, n);
+
+    float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
+
+    // TASK: print matrix size & backward error
+
+    free(h_A_out);
+    free(h_Q_out);
+    free(h_R);
+}
+
+void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
+    // TASK: write arguments to log file
+}
+
+float h_qr_flops_per_second(float time_ms, int m, int n) {
+    /*
+    * Computes FLOPs / second for householder QR given matrix dimensions and execution time
+    * 
+    * TASK: Verify equation and provide academic reference for equation (textbook or paper)
+    */
+    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.));
 }
 
 void test_h_block_qr() {
@@ -683,6 +746,7 @@ void test_h_block_qr() {
 
     printf("\nTesting sequential block QR...\n");
 
+    // TASK: use read_euroc_jacobian to load test matrices
     float A_in[6][6] = {
         {10,20,30,40,50,60},
         {32,32,44,55,66,35},
@@ -698,28 +762,28 @@ void test_h_block_qr() {
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
-    float* QR = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
-    float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
+    float time_ms = 0; // TASK: Time how long the QR function takes to execute
+
     h_block_qr((float*)A_out, Q, m, n, r);
+
+    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK: verify equation in function through research
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
-    //|| A - QR||/||A ||
-    h_mmult((float*)Q, R, QR, m, n, m);
-    h_matrix_subtract((float*)A_in, QR, A_sub_QR, m, n);
-    float backward_error = h_matrix_norm(A_sub_QR, m, n) / h_matrix_norm((float*)A_in, m, n);
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+
+    // TASK: Implement following function to write results to log file
+    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("Sequential block QR finished...\n");
     printf("Backward error: %f", backward_error);
 
     free(Q);
     free(R);
-    free(QR);
-    free(A_sub_QR);
     free(A_out);
 }
 
