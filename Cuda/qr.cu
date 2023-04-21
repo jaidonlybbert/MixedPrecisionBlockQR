@@ -35,6 +35,7 @@ SOFTWARE.
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <assert.h>
 
 void h_householder_qr(float* A, float* Q, int m, int n) {
     // TASK: implement overloaded householder function, which returns Q matrix by reference
@@ -328,6 +329,12 @@ void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** m
 
     fin.open(filename);
 
+    if (!fin) {
+        printf("File not found.");
+    }
+
+    assert(fin);
+
     // Read first line to get dimensions
     getline(fin, line);
 
@@ -468,7 +475,7 @@ void test_dev_householder_qr() {
     dim3 DimGrid(1, 1, 1);
     dim3 DimBlock(1, 1, 1);
     // TASK: Time execution of the following kernel call
-    dev_householder_qr << <DimGrid, DimBlock >> > (dev_A, m, n, 0);
+    dev_householder_qr <<<DimGrid, DimBlock >> > (dev_A, m, n, 0);
 
     cudaDeviceSynchronize();
 
