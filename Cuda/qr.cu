@@ -186,6 +186,23 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         }
     }
 
+    // Im - WY^T (classic "triply-nested-loop")
+    for (int row = 0; row < m - global_offset; row++) { // rows of W_Yt
+        for (int col = 0; col < m - global_offset; col++) { // cols of W_Yt
+            // compute each inner product
+            float inner_product = 0;
+            for (int idx = 0; idx < panel_width; idx++) { // cols of W
+                inner_product += W[row * panel_width + idx] * Y[col * panel_width + idx];
+            }
+            if (row == col) { // Im is 1
+                W_Yt[row * (m - global_offset) + col] = 1 - inner_product; // Im - WY^T
+            }
+            else { // Im is zero
+                W_Yt[row * (m - global_offset) + col] = -inner_product;
+            }
+        }
+    }
+
     free(W);
     free(Y);
     free(z);
@@ -625,10 +642,12 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
 
 float h_error_2() {
     // TASK: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    return 0;
 }
 
 float h_error_3() {
     // TASK: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    return 0;
 }
 
 void test_h_mmult() {
@@ -667,29 +686,32 @@ void test_h_householder_qr() {
     int m = 6;
     int n = 6;
     int r = 3;
+    for (int global_offset = 0; global_offset < 6; global_offset++) {
+        float* Q = (float*)malloc(m * m * sizeof(float));
+        float* R = (float*)malloc(m * n * sizeof(float));
+        float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
-    float* Q = (float*)malloc(m * m * sizeof(float));
-    float* R = (float*)malloc(m * n * sizeof(float));
-    float* A_out = (float*)malloc((m+1) * n * sizeof(float));
+        h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    h_matrix_cpy((float*)A_in, A_out, m, n);
+        //h_block_qr((float*)A, Q, m, n, r);
+        h_householder_qr((float*)A_out, m, n, global_offset, r);
 
-    //h_block_qr((float*)A, Q, m, n, r);
-    h_householder_qr((float*)A_out, m, n, 0, 6);
+        h_wy_transform(A_out, &Q, m, n, global_offset, r);
 
-    h_wy_transform(A_out, &Q, m, n, 0, n);
+        h_strip_R_from_A((float*)A_out, R, m, n);
 
-    h_strip_R_from_A((float*)A_out, R, m, n);
+        float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+        printf("Backward error: %f\n", backward_error);
+        printf("Sequential householder QR finished...\n");
 
-    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-    printf("Backward error: %f\n", backward_error);
-    printf("Sequential householder QR finished...\n");
+        // TASK: write results to log file
 
-    // TASK: write results to log file
-    
-    free(Q);
-    free(R);
-    free(A_out);
+        free(Q);
+        free(R);
+        free(A_out);
+    }
+
+
 }
 
 
