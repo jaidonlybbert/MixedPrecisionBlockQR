@@ -613,11 +613,9 @@ void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int n, int l
 
 void dev_block_qr(float* A, float* Q, int m, int n, int r) {
     /*
-    * Kernel to compute QR decomposition with Block QR algorithm
+    * GPU code to compute QR decomposition with Block QR algorithm
     */
 
-    // initialize Q, lambda, k
-    //h_identity_mtx(Q, m, m);
     float* panel_Q = NULL;
     int lambda = 0;
     while (lambda < n) { // panel starts at lambda
@@ -627,22 +625,10 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         // R is stored in upper triangular portion of dev_A
         h_householder_qr(A, m, n, lambda, r);
 
-        // Get panel Q from factors
-        h_wy_transform(A, &panel_Q, m, n, lambda, r); // dim panel_Q: (m-lambda)x(m-lambda)
+        // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
+        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK: write cuda kernel to implement WY transform on GPU
 
         // Update matrix A = Q^T @ A
-        //float* A_old = (float*)malloc(m * n * sizeof(float));
-        //memcpy(A_old, A, m * n * sizeof(float));
-        //for (int row = lambda; row < m; row++) {
-        //    for (int col = tau; col < n; col++) {
-        //        float inner_product = 0;
-        //        for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-        //            inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim)*n + col];
-        //        }
-        //        A[row * n + col] = inner_product;
-        //    }
-        //}
-        //free(A_old);
         float blockWidth = 32.;
         float blockHeight = 32.;
 
@@ -661,6 +647,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
 
+        // Update global Q
         dev_apply_qt_to_a<<<GridDim, BlockDim>>>(dev_A, dev_panel_Q, m, n, tau, lambda);
 
         dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
@@ -672,20 +659,6 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
         cudaMemcpy(Q, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
         
-        // Update global Q
-        //float* Q_old = (float*)malloc(m * m * sizeof(float));
-        //memcpy(Q_old, Q, m * m * sizeof(float));
-        //for (int row = 0; row < m; row++) {
-        //    for (int col = lambda; col < m; col++) {
-        //        float inner_product = 0;
-        //        for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-        //            inner_product += Q_old[row * n + inner_dim + lambda] * panel_Q[(inner_dim * (m - lambda)) + (col - lambda)];
-        //        }
-        //        Q[row * m + col] = inner_product;
-        //    }
-        //}
-        //free(Q_old);
-
         cudaFree(dev_A);
         cudaFree(dev_panel_Q);
         cudaFree(dev_Q);
