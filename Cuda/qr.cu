@@ -131,19 +131,14 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
 }
 
 float h_error_2() {
-    // TASK1: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    // TASK1 2 mike: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
     return 0;
 }
 
 float h_error_3() {
-    // TASK2: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    // TASK2 2 mike: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
     return 0;
 }
-
-void h_householder_qr(float* A, float* Q, int m, int n) {
-    // TASK3: implement overloaded householder function, which returns Q matrix by reference
-    // (rather than embedding householder vectors in lower triangular part of A)
-} 
 
 void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width) {
     /*
@@ -433,11 +428,11 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
         u[0] = sign * mag + u[0]; // v overwrites u
         // Normalize
         mag = 0;
-        for (int i = 0; i < len; i++) { // TASK4: implement parallel algorithm in CUDA to replace for loop
+        for (int i = 0; i < len; i++) { // TASK4 1 shashank: implement parallel algorithm in CUDA to replace for loop
             mag += u[i] * u[i];
         }
         mag = sqrtf(mag);
-        for (int i = 0; i < len; i++) { // TASK5: implement parallel algorithm in CUDA to replace for loop
+        for (int i = 0; i < len; i++) { // TASK5 1 shashank: implement parallel algorithm in CUDA to replace for loop
             u[i] /= mag; // w_k overwrites v, here u = w_k = v_k = householder vector
         }
 
@@ -447,7 +442,7 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
 
         // (V^T)(A_k:m,k:n) - vector matrix product
         float* temp = (float*)malloc((n - k) * sizeof(float));
-        for (int col = k; col < n; col++) { // TASK6: implement parallel algorithm in CUDA to replace for loop
+        for (int col = k; col < n; col++) { // TASK6 1 shashank: implement parallel algorithm in CUDA to replace for loop
             float inner_product = 0;
             for (int row = k; row < m; row++) {
                 inner_product += u[row - k] * dev_A[row * n + col];
@@ -457,7 +452,7 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
         
         // (A_k:m,k:n) - 2 * (V)(V^T)(A_k:m,k:n)
         float* temp2 = (float*)malloc((n - k) * (m - k) * sizeof(float));
-        for (int row = k; row < m; row++) { // TASK7: implement parallel algorithm in CUDA to replace for loop
+        for (int row = k; row < m; row++) { // TASK7 1 shashank: implement parallel algorithm in CUDA to replace for loop
             for (int col = k; col < n; col++) {
                 temp2[(row - k) * (n - k) + (col - k)] = u[row-k] * temp[col-k];
                 dev_A[row * n + col] = dev_A[row * n + col] - 2 * temp2[(row - k) * (n - k) + (col - k)];
@@ -465,7 +460,7 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
         }
 
         // Copy householder vector (vk) to lower triangular portion of A
-        for (int row = k + 1; row < k + len + 1; row++) { // TASK8: implement parallel algorithm in CUDA to replace for loop
+        for (int row = k + 1; row < k + len + 1; row++) { // TASK8 1 shashank: implement parallel algorithm in CUDA to replace for loop
             dev_A[row * n + k] = u[row - k - 1];
         }
 
@@ -484,7 +479,7 @@ float* h_generate_random_matrix(int height, int width) {
 
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
-            matrix[row * width + col] = 0; // TASK9: randomize this number
+            matrix[row * width + col] = 0; // TASK9 1 fulin: randomize this number
         }
     }
 
@@ -626,7 +621,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         h_householder_qr(A, m, n, lambda, r);
 
         // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK10: write cuda kernel to implement WY transform on GPU
+        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK10 3 jaidon: write cuda kernel to implement WY transform on GPU
 
         // Update matrix A = Q^T @ A
         float blockWidth = 32.;
@@ -703,7 +698,7 @@ void test_dev_householder_qr() {
     // Call kernel to collaboratively copy input matrix from Global memory to Shared memory
     dim3 DimGrid(1, 1, 1);
     dim3 DimBlock(1, 1, 1);
-    // TASK11: Time execution of the following kernel call
+    // TASK11 1 alice: Time execution of the following kernel call
     dev_householder_qr <<<DimGrid, DimBlock >> > (dev_A, m, n, 0);
 
     cudaDeviceSynchronize();
@@ -719,8 +714,11 @@ void test_dev_householder_qr() {
     printf("Backward error: %f\n", backward_error);
     printf("GPU householder QR finished...\n");
 
-    // TASK12: Compute error
-    // TASK13: Write results to log file
+    // TASK12 1 mike: Compute error
+    // error_2()
+    // error_3()
+    // TASK13 2 flynn: Write results to log file
+    //h_write_results_to_log()
 
     //h_wy_transform(h_A_out, m, n, 0, n);
 
@@ -814,7 +812,7 @@ void test_h_householder_qr() {
     * Test host version of householder QR
     */
 
-    // TASK14: iterate over many matrix sizes, & test matrices from Tong
+    // TASK14 3 alice: iterate over many matrix sizes, & test matrices from Tong
     printf("\nTesting sequential householder QR...\n");
 
     float A_in[6][6] = {
@@ -847,8 +845,7 @@ void test_h_householder_qr() {
         printf("Backward error: %f\n", backward_error);
         printf("Sequential householder QR finished...\n");
 
-        // TASK15: write results to log file
-
+        // TASK15 duplicate: write results to log file
         free(Q);
         free(R);
         free(A_out);
@@ -860,11 +857,11 @@ void test_h_householder_qr() {
 
 void test_h_wy_transform() {
     // Initialize test matrix A input on Host
-    // TASK16: iterate over many matrix sizes
+    // TASK16 duplicate: iterate over many matrix sizes
     int m = 3;
     int n = 3;
 
-    // TASK17: use h_generate_random_matrix to randomize input matrix
+    // TASK17 duplicate: use h_generate_random_matrix to randomize input matrix
     float h_A_in[3][3] = {
         {12, -51, 4},
         {6, 167, -68},
@@ -875,7 +872,6 @@ void test_h_wy_transform() {
     float* h_R = (float*)malloc(m * n * sizeof(float));
     float* h_Q_out = NULL; // pointer to Q is returned by h_wy_transform
 
-    // TASK18: how can we test wy_transform without depending on using QR function?
     h_householder_qr((float*)h_A_in, m, n, 0, n);
 
     h_wy_transform((float*)h_A_out, &h_Q_out, m, n, 0, n);
@@ -884,7 +880,7 @@ void test_h_wy_transform() {
 
     float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
 
-    // TASK19: print matrix size & backward error
+    // TASK19 1 : print matrix size & backward error
 
     free(h_A_out);
     free(h_Q_out);
@@ -892,14 +888,14 @@ void test_h_wy_transform() {
 }
 
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
-    // TASK20: write arguments to log file
+    // TASK20 2: write arguments to log file
 }
 
 float h_qr_flops_per_second(float time_ms, int m, int n) {
     /*
     * Computes FLOPs / second for householder QR given matrix dimensions and execution time
     * 
-    * TASK21: Verify equation and provide academic reference for equation (textbook or paper)
+    * TASK21 2: Verify equation and provide academic reference for equation (textbook or paper)
     */
     return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.));
 }
@@ -911,7 +907,7 @@ void test_h_block_qr() {
 
     printf("\nTesting sequential block QR...\n");
 
-    // TASK22: use read_euroc_jacobian to load test matrices
+    // TASK22 1 alice: use read_euroc_jacobian to load test matrices
     float A_in[6][6] = {
         {10,20,30,40,50,60},
         {32,32,44,55,66,35},
@@ -933,17 +929,17 @@ void test_h_block_qr() {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    float time_ms = 0; // TASK23: Time how long the QR function takes to execute
+    float time_ms = 0; // TASK23 1 alice: Time how long the QR function takes to execute
 
     h_block_qr((float*)A_out, Q, m, n, r);
 
-    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK24: verify equation in function through research
+    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK24 duplicate: verify equation in function through research
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
     float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
 
-    // TASK25: Implement following function to write results to log file
+    // TASK25 duplicate: Implement following function to write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("Sequential block QR finished...\n");
@@ -961,7 +957,7 @@ void test_dev_block_qr() {
 
     printf("\nTesting GPU block QR...\n");
 
-    // TASK26: use read_euroc_jacobian to load test matrices
+    // TASK26 duplicate: use read_euroc_jacobian to load test matrices
     float A_in[6][6] = {
         {10,20,30,40,50,60},
         {32,32,44,55,66,35},
@@ -983,17 +979,17 @@ void test_dev_block_qr() {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    float time_ms = 0; // TASK28: Time how long the QR function takes to execute
+    float time_ms = 0; // TASK28 duplicate: Time how long the QR function takes to execute
 
     dev_block_qr((float*)A_out, Q, m, n, r);
 
-    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK29: verify equation in function through research
+    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK29 duplicate: verify equation in function through research
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
     float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
 
-    // TASK30: Implement following function to write results to log file
+    // TASK30 duplicate: Implement following function to write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("GPU block QR finished...\n");
