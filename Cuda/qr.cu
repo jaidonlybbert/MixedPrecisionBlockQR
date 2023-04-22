@@ -37,6 +37,109 @@ SOFTWARE.
 #include <string>
 #include <assert.h>
 
+void h_mmult(float* A, float* B, float* C, int m, int n, int k) {
+    /*
+    * A - mxk
+    * B - kxn
+    * C - mxn
+    *
+    * C = AB
+    */
+
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            float inner_product = 0;
+            for (int inner_idx = 0; inner_idx < k; inner_idx++) {
+                inner_product += A[row * k + inner_idx] * B[(inner_idx)*n + col];
+            }
+            C[row * n + col] = inner_product;
+        }
+    }
+}
+
+void h_matrix_subtract(float* A, float* B, float* C, int m, int n) {
+    /*
+    * Dimensions all match, element-wise subtraction
+    *
+    * C = A - B
+    */
+
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            C[row * n + col] = A[row * n + col] - B[row * n + col];
+        }
+    }
+}
+
+float h_matrix_norm(float* A, int m, int n) {
+    /*
+    * A shape: mxn
+    *
+    * norm = ||A||
+    */
+
+    float norm = 0;
+    float squared_sum = 0;
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            squared_sum += A[row * n + col] * A[row * n + col];
+        }
+    }
+    return sqrtf(squared_sum);
+}
+
+void h_matrix_cpy(float* A, float* B, int m, int n) {
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            B[row * n + col] = A[row * n + col];
+        }
+    }
+}
+
+void h_strip_R_from_A(float* A, float* R, int m, int n) {
+    /*
+    * Removes householder vectors from lower triangular section of A
+    */
+
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            if (row <= col) {
+                R[row * n + col] = A[row * n + col];
+            }
+            else {
+                R[row * n + col] = 0;
+            }
+        }
+    }
+}
+
+float h_backward_error(float* A, float* R, float* Q, int m, int n) {
+    // Computes || A - QR||/||A ||
+
+    float* QR = (float*)malloc(m * n * sizeof(float));
+    float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
+
+    h_mmult((float*)Q, R, QR, m, n, m);
+    h_matrix_subtract((float*)A, QR, A_sub_QR, m, n);
+
+    float backward_error = (h_matrix_norm(A_sub_QR, m, n) / h_matrix_norm((float*)A, m, n));
+
+    free(QR);
+    free(A_sub_QR);
+
+    return backward_error;
+}
+
+float h_error_2() {
+    // TASK: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    return 0;
+}
+
+float h_error_3() {
+    // TASK: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    return 0;
+}
+
 void h_householder_qr(float* A, float* Q, int m, int n) {
     // TASK: implement overloaded householder function, which returns Q matrix by reference
     // (rather than embedding householder vectors in lower triangular part of A)
@@ -209,6 +312,76 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     free(z);
     //free(W_Yt);
     *h_Q = W_Yt;
+}
+
+__global__ void global_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a_width, int a_height, int b_width)
+/*
+* Computes result c matrix from the matrix multiplication C = AB using global memory with CUDA
+*
+* Assumed a_width == b_height
+*
+* Dimensions of C are a_height x b_width
+*/
+{
+    // row and column of the C result
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < a_height && col < b_width) {
+        // Calculate the inner product of the row of A and column of B
+        float innerProduct = 0;
+        for (int i = 0; i < a_width; i++) {
+            innerProduct += a_mtx[a_width * row + i] * b_mtx[b_width * i + col];
+        }
+
+        c_mtx[b_width * row + col] = innerProduct;
+    }
+}
+
+#define TILE_WIDTH 3
+
+__global__ void shared_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a_width, int a_height, int b_width)
+/*
+* Computes result c matrix from the matrix multiplication C = AB using shared memory with CUDA
+*
+* Assumed a_width == b_height
+*
+* Dimensions of C are a_height x b_width
+*/
+{
+    // row and column of C result
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __shared__ float ads[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float bds[TILE_WIDTH][TILE_WIDTH];
+
+    int ty = threadIdx.y, tx = threadIdx.x;
+
+    int phases = ceil(a_width / (float)TILE_WIDTH);
+
+    float pval = 0.0;
+    for (int i = 0; i < phases; i++) {
+        if ((i * TILE_WIDTH + tx < a_width) && (row < a_height)) {
+            ads[ty][tx] = a_mtx[row * a_width + i * TILE_WIDTH + tx];
+        }
+
+        if ((i * TILE_WIDTH + ty < a_width) && (col < b_width)) {
+            bds[ty][tx] = b_mtx[(i * TILE_WIDTH + ty) * b_width + col];
+        }
+
+        __syncthreads();
+
+        for (int k = 0; k < TILE_WIDTH; k++) {
+            if ((i * TILE_WIDTH + k) < a_width)
+                pval += ads[ty][k] * bds[k][tx];
+        }
+        __syncthreads();
+    }
+
+    if (col < b_width && row < a_height) {
+        c_mtx[row * b_width + col] = pval;
+    }
 }
 
 
@@ -412,37 +585,62 @@ void dev_apply_qt(float* dev_A, float* dev_Q, int m, int n, int tau) {
 }
 
 
-void dev_block_qr(float* dev_A, float* dev_Q, int m, int n, int r) {
+
+void dev_block_qr(float* A, float* Q, int m, int n, int r) {
     /*
     * Kernel to compute QR decomposition with Block QR algorithm
     */
 
-    int k = 0;
-
     // initialize Q, lambda, k
-    while (int lambda = 0 <= n) {
-        // set panel offset
-        int tau = (lambda + r - 1 < n) ? (lambda + r - 1) : n;
-        k += 1;
-
-        dim3 GridDim(1, 1, 1);
-        dim3 BlockDim(m, n, 1);
-
-        dev_householder_qr<<<GridDim, BlockDim>>>(dev_A, m, n, lambda);
-
-        cudaDeviceSynchronize();
+    //h_identity_mtx(Q, m, m);
+    float* panel_Q = NULL;
+    int lambda = 0;
+    while (lambda < n) { // panel starts at lambda
+        int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
 
         // Q is stored in factored form in lower triangular portion of dev_A
         // R is stored in upper triangular portion of dev_A
-        //apply_qt<<<GridDim, BlockDim>>>(dev_A, m, n, tau);
+        h_householder_qr(A, m, n, lambda, r);
 
-        cudaDeviceSynchronize();
+        // Get panel Q from factors
+        h_wy_transform(A, &panel_Q, m, n, lambda, r); // dim panel_Q: (m-lambda)x(m-lambda)
+
+        // Update matrix A = Q^T @ A
+        float* A_old = (float*)malloc(m * n * sizeof(float));
+        memcpy(A_old, A, m * n * sizeof(float));
+        for (int row = lambda; row < m; row++) {
+            for (int col = tau; col < n; col++) {
+                float inner_product = 0;
+                for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
+                    inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim)*n + col];
+                }
+                A[row * n + col] = inner_product;
+            }
+        }
+        free(A_old);
+
+        // Update global Q
+        float* Q_old = (float*)malloc(m * m * sizeof(float));
+        memcpy(Q_old, Q, m * m * sizeof(float));
+        for (int row = 0; row < m; row++) {
+            for (int col = lambda; col < m; col++) {
+                float inner_product = 0;
+                for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
+                    inner_product += Q_old[row * n + inner_dim + lambda] * panel_Q[(inner_dim * (m - lambda)) + (col - lambda)];
+                }
+                Q[row * m + col] = inner_product;
+            }
+        }
+        free(Q_old);
 
         // increment panel offset
+        lambda = tau;
     }
 }
 
 void test_dev_householder_qr() {
+    printf("\nTesting GPU householder QR...\n");
+
     int rows, cols;
     double* mtx;
 
@@ -460,12 +658,13 @@ void test_dev_householder_qr() {
 
     float* h_A_out = (float*)malloc((m+1) * n * sizeof(float)); // extra row gives room for storing householder vectors in lower triangular portion of A
     float* h_Q_out = (float*)malloc(m * m * sizeof(float));
+    float* h_R = (float*)malloc(m * n * sizeof(float));
 
     // Allocate device memory for input matrix
     float* dev_A;
     float* dev_Q; // Matrix Q in A=QR
 
-    cudaMalloc(&dev_Q, m * m * sizeof(float));
+    //cudaMalloc(&dev_Q, m * m * sizeof(float));
     cudaMalloc(&dev_A, (m+1) * n * sizeof(float));
 
     // Copy input matrix to device Global memory
@@ -480,7 +679,15 @@ void test_dev_householder_qr() {
     cudaDeviceSynchronize();
 
     cudaMemcpy(h_A_out, dev_A, (m+1) * n * sizeof(float), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_Q_out, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+    //cudaMemcpy(h_Q_out, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+
+    h_wy_transform(h_A_out, &h_Q_out, m, n, 0, n);
+
+    h_strip_R_from_A((float*)h_A_out, h_R, m, n);
+
+    float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
+    printf("Backward error: %f\n", backward_error);
+    printf("GPU householder QR finished...\n");
 
     // TASK: Compute error
     // TASK: Write results to log file
@@ -508,7 +715,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
     */
 
     // initialize Q, lambda, k
-    h_identity_mtx(Q, m, m);
+    //h_identity_mtx(Q, m, m);
     float* panel_Q = NULL;
     int lambda = 0;
     while (lambda < n) { // panel starts at lambda
@@ -554,108 +761,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
     }
 }
 
-void h_mmult(float* A, float* B, float* C, int m, int n, int k) {
-    /*
-    * A - mxk
-    * B - kxn
-    * C - mxn
-    * 
-    * C = AB
-    */
 
-    for (int row = 0; row < m; row++) {
-        for (int col = 0; col < n; col++) {
-            float inner_product = 0;
-            for (int inner_idx = 0; inner_idx < k; inner_idx++) {
-                inner_product += A[row * k + inner_idx] * B[(inner_idx) * n + col];
-            }
-            C[row * n + col] = inner_product;
-        }
-    }
-}
-
-void h_matrix_subtract(float* A, float* B, float* C, int m, int n) {
-    /*
-    * Dimensions all match, element-wise subtraction
-    * 
-    * C = A - B
-    */
-
-    for (int row = 0; row < m; row++) {
-        for (int col = 0; col < n; col++) {
-            C[row * n + col] = A[row * n + col] - B[row * n + col];
-        }
-    }
-}
-
-float h_matrix_norm(float* A, int m, int n) {
-    /*
-    * A shape: mxn
-    * 
-    * norm = ||A||
-    */
-
-    float norm = 0;
-    float squared_sum = 0;
-    for (int row = 0; row < m; row++) {
-        for (int col = 0; col < n; col++) {
-            squared_sum += A[row * n + col] * A[row * n + col];
-        }
-    }
-    return sqrtf(squared_sum);
-}
-
-void h_matrix_cpy(float* A, float* B, int m, int n) {
-    for (int row = 0; row < m; row++) {
-        for (int col = 0; col < n; col++) {
-            B[row * n + col] = A[row * n + col];
-        }
-    }
-}
-
-void h_strip_R_from_A(float* A, float* R, int m, int n) {
-    /*
-    * Removes householder vectors from lower triangular section of A
-    */
-
-    for (int row = 0; row < m; row++) {
-        for (int col = 0; col < n; col++) {
-            if (row <= col) {
-                R[row * n + col] = A[row * n + col];
-            }
-            else {
-                R[row * n + col] = 0;
-            }
-        }
-    }
-}
-
-float h_backward_error(float* A, float* R, float* Q, int m, int n) {
-    // Computes || A - QR||/||A ||
-
-    float* QR = (float*)malloc(m * n * sizeof(float));
-    float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
-    
-    h_mmult((float*)Q, R, QR, m, n, m);
-    h_matrix_subtract((float*)A, QR, A_sub_QR, m, n);
-
-    float backward_error = (h_matrix_norm(A_sub_QR, m, n) / h_matrix_norm((float*)A, m, n));
-
-    free(QR);
-    free(A_sub_QR);
-
-    return backward_error;
-}
-
-float h_error_2() {
-    // TASK: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
-    return 0;
-}
-
-float h_error_3() {
-    // TASK: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
-    return 0;
-}
 
 void test_h_mmult() {
     float A[3][3] = {
@@ -770,7 +876,7 @@ float h_qr_flops_per_second(float time_ms, int m, int n) {
 
 void test_h_block_qr() {
     /*
-    * Test host version of householder QR
+    * Test host version of block QR
     */
 
     printf("\nTesting sequential block QR...\n");
@@ -811,7 +917,57 @@ void test_h_block_qr() {
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("Sequential block QR finished...\n");
-    printf("Backward error: %f", backward_error);
+    printf("Backward error: %f\n", backward_error);
+
+    free(Q);
+    free(R);
+    free(A_out);
+}
+
+void test_dev_block_qr() {
+    /*
+    * Test GPU version of block QR
+    */
+
+    printf("\nTesting GPU block QR...\n");
+
+    // TASK: use read_euroc_jacobian to load test matrices
+    float A_in[6][6] = {
+        {10,20,30,40,50,60},
+        {32,32,44,55,66,35},
+        {23,66,74,64,45,65},
+        {67,28,46,26,46,42},
+        {95,95,52,88,65,11},
+        {75,53,96,47,32,32},
+    };
+
+    int m = 6;
+    int n = 6;
+    int r = 3;
+
+    float* Q = (float*)malloc(m * m * sizeof(float));
+    float* R = (float*)malloc(m * n * sizeof(float));
+    float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
+
+    h_identity_mtx(Q, m, m);
+
+    h_matrix_cpy((float*)A_in, A_out, m, n);
+
+    float time_ms = 0; // TASK: Time how long the QR function takes to execute
+
+    h_block_qr((float*)A_out, Q, m, n, r);
+
+    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK: verify equation in function through research
+
+    h_strip_R_from_A((float*)A_out, R, m, n);
+
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+
+    // TASK: Implement following function to write results to log file
+    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
+
+    printf("GPU block QR finished...\n");
+    printf("Backward error: %f\n", backward_error);
 
     free(Q);
     free(R);
@@ -823,4 +979,5 @@ int main() {
     test_h_mmult();
     test_h_householder_qr();
     test_h_block_qr();
+    test_dev_block_qr();
 }
