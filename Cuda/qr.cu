@@ -52,16 +52,16 @@ void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width
     */
 
     // Iterate over columns
-    int r = panel_width + global_offset;
+    int r = (panel_width + global_offset) > n ? n: panel_width + global_offset;
     for (int k = global_offset; k < r; k++) {
         /*
         * Compute householder vector
         */
 
         // Skip last transform if square matrix
-        if (m == n && k == n - 1) {
-            break;
-        }
+        //if (m == n && k == n - 1) {
+        //    break;
+        //}
 
         // Copy the column as u - can be done in parallel
         int len = m - k;
@@ -521,14 +521,14 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
         // Get panel Q from factors
         h_wy_transform(A, &panel_Q, m, n, lambda, r); // dim panel_Q: (m-lambda)x(m-lambda)
 
-        // Update matrix A
+        // Update matrix A = Q^T @ A
         float* A_old = (float*)malloc(m * n * sizeof(float));
         memcpy(A_old, A, m * n * sizeof(float));
         for (int row = lambda; row < m; row++) {
             for (int col = tau; col < n; col++) {
                 float inner_product = 0;
                 for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(row + inner_dim) * n + col];
+                    inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim) * n + col];
                 }
                 A[row * n + col] = inner_product;
             }
@@ -542,7 +542,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
             for (int col = lambda; col < m; col++) {
                 float inner_product = 0;
                 for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += Q_old[row * n + inner_dim] * panel_Q[(inner_dim * (m-lambda)) + (col-lambda)];
+                    inner_product += Q_old[row * n + inner_dim + lambda] * panel_Q[(inner_dim * (m-lambda)) + (col-lambda)];
                 }
                 Q[row * m + col] = inner_product;
             }
@@ -692,8 +692,8 @@ void test_h_householder_qr() {
 
     int m = 6;
     int n = 6;
-    int r = 3;
-    for (int global_offset = 0; global_offset < 6; global_offset++) {
+    int r = 6;
+    for (int global_offset = 0; global_offset < 1; global_offset++) {
         float* Q = (float*)malloc(m * m * sizeof(float));
         float* R = (float*)malloc(m * n * sizeof(float));
         float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
@@ -792,6 +792,8 @@ void test_h_block_qr() {
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
+
+    h_identity_mtx(Q, m, m);
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
