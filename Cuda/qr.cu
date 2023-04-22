@@ -575,13 +575,38 @@ void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** m
 
 
 __global__
-void dev_apply_qt(float* dev_A, float* dev_Q, int m, int n, int tau) {
+void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, int m, int n, int tau, int lambda) {
     // Collaboratively load householder vectors vk from global memory to shared memory
     // Construct W, K from householder vectors
     // Construct Q
     // Collaboratively load matrix A to shared memory
     // Perform tiled GMMULT TensorCore warp-level mixed precision fused multiply add operations to update Q and A
     // Update matrix Q, A in global memory
+
+    int row = blockIdx.y * blockDim.y + threadIdx.y + lambda;
+    int col = blockIdx.x * blockDim.x + threadIdx.x + tau;
+
+    if (row < m && row >= lambda && col < n && col >= tau) {
+        float inner_product = 0;
+        for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
+            inner_product += dev_panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * dev_A[(inner_dim)*n + col];
+        }
+        dev_A[row * n + col] = inner_product;
+    }
+}
+
+__global__
+void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int n, int lambda) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x + lambda;
+
+    if (row >= 0 && row < m && col >= lambda && col < m) {
+        float inner_product = 0;
+        for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
+            inner_product += dev_Q[row * n + inner_dim + lambda] * dev_Q_panel[(inner_dim * (m - lambda)) + (col - lambda)];
+        }
+        dev_Q[row * m + col] = inner_product;
+    }
 }
 
 
@@ -606,32 +631,64 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         h_wy_transform(A, &panel_Q, m, n, lambda, r); // dim panel_Q: (m-lambda)x(m-lambda)
 
         // Update matrix A = Q^T @ A
-        float* A_old = (float*)malloc(m * n * sizeof(float));
-        memcpy(A_old, A, m * n * sizeof(float));
-        for (int row = lambda; row < m; row++) {
-            for (int col = tau; col < n; col++) {
-                float inner_product = 0;
-                for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim)*n + col];
-                }
-                A[row * n + col] = inner_product;
-            }
-        }
-        free(A_old);
+        //float* A_old = (float*)malloc(m * n * sizeof(float));
+        //memcpy(A_old, A, m * n * sizeof(float));
+        //for (int row = lambda; row < m; row++) {
+        //    for (int col = tau; col < n; col++) {
+        //        float inner_product = 0;
+        //        for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
+        //            inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim)*n + col];
+        //        }
+        //        A[row * n + col] = inner_product;
+        //    }
+        //}
+        //free(A_old);
+        float blockWidth = 32.;
+        float blockHeight = 32.;
 
+        float* dev_A;
+        float* dev_Q;
+        float* dev_panel_Q;
+
+        cudaMalloc(&dev_A, m * n * sizeof(float));
+        cudaMalloc(&dev_Q, m * m * sizeof(float));
+        cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
+
+        cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
+
+        dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
+
+        dev_apply_qt_to_a<<<GridDim, BlockDim>>>(dev_A, dev_panel_Q, m, n, tau, lambda);
+
+        dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim2(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
+        dev_apply_qpanel_to_q << <GridDim2, BlockDim2 >> >(dev_Q, dev_panel_Q, m, n, lambda);
+
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(Q, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+        
         // Update global Q
-        float* Q_old = (float*)malloc(m * m * sizeof(float));
-        memcpy(Q_old, Q, m * m * sizeof(float));
-        for (int row = 0; row < m; row++) {
-            for (int col = lambda; col < m; col++) {
-                float inner_product = 0;
-                for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += Q_old[row * n + inner_dim + lambda] * panel_Q[(inner_dim * (m - lambda)) + (col - lambda)];
-                }
-                Q[row * m + col] = inner_product;
-            }
-        }
-        free(Q_old);
+        //float* Q_old = (float*)malloc(m * m * sizeof(float));
+        //memcpy(Q_old, Q, m * m * sizeof(float));
+        //for (int row = 0; row < m; row++) {
+        //    for (int col = lambda; col < m; col++) {
+        //        float inner_product = 0;
+        //        for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
+        //            inner_product += Q_old[row * n + inner_dim + lambda] * panel_Q[(inner_dim * (m - lambda)) + (col - lambda)];
+        //        }
+        //        Q[row * m + col] = inner_product;
+        //    }
+        //}
+        //free(Q_old);
+
+        cudaFree(dev_A);
+        cudaFree(dev_panel_Q);
+        cudaFree(dev_Q);
 
         // increment panel offset
         lambda = tau;
@@ -955,7 +1012,7 @@ void test_dev_block_qr() {
 
     float time_ms = 0; // TASK: Time how long the QR function takes to execute
 
-    h_block_qr((float*)A_out, Q, m, n, r);
+    dev_block_qr((float*)A_out, Q, m, n, r);
 
     float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK: verify equation in function through research
 
