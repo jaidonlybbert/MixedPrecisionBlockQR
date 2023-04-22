@@ -674,7 +674,7 @@ void test_dev_householder_qr() {
     int rows, cols;
     double* mtx;
 
-    read_euroc_jacobian("C:\\Users\\jaido\\source\\MixedPrecisionBlockQR\\Cuda\\jacobians\\A_000000100.txt", &rows, &cols, &mtx);
+    //read_euroc_jacobian("C:\\Users\\jaido\\source\\MixedPrecisionBlockQR\\Cuda\\jacobians\\A_000000100.txt", &rows, &cols, &mtx);
 
     int m = 3;
     int n = 3;
