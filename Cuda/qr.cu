@@ -36,6 +36,8 @@ SOFTWARE.
 #include <fstream>
 #include <string>
 #include <assert.h>
+#include <cstdlib>
+#include <vector>
 
 void h_mmult(float* A, float* B, float* C, int m, int n, int k) {
     /*
@@ -474,11 +476,12 @@ float* h_generate_random_matrix(int height, int width) {
     /*
     * Returns pointer to random float matrix of dimensions HeightxWidth
     */
-
+    unsigned seed = time(0);
+    srand(seed);
     float* matrix = (float*)malloc(height * width * sizeof(float));
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
-            matrix[row * width + col] = 0; // TASK9 1 fulin: randomize this number
+            matrix[row * width + col] = rand(); // TASK9 1 fulin: randomize this number
         }
     }
 
