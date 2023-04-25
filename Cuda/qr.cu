@@ -989,7 +989,7 @@ float h_qr_flops_per_second(float time_ms, int m, int n) {
     * 
     * TASK21 2: Verify equation and provide academic reference for equation (textbook or paper)
     */
-    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.));
+    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms * 1000);
 }
 
 void test_h_block_qr() {
