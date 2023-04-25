@@ -178,10 +178,24 @@ float h_error_2(float* Q, int m) {
     return error;
 }
 
-float h_error_3() {
+float h_error_3(float* R, int m, int n) {
     // TASK2 2 mike: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
     // ||L|| < m * 2E-23
-    return 0;
+    float* L = (float*)malloc(m * n * sizeof(float));
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            if (col < row){
+                L[row * n + col] = L[row * n + col];
+            }
+            else{
+                L[row * n + col] = 0;
+            }
+        }
+    }
+    float error3 = (h_matrix_norm(L, m, n));
+    free(L);
+
+    return error3;
 }
 
 void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width) {
@@ -918,9 +932,11 @@ void test_h_householder_qr() {
         h_strip_R_from_A((float*)A_out, R, m, n);
 
         float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+	float error3 = h_error_3(R, m, n);
         printf("||A - QR||/||A|| = %e\n", backward_error);
         printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
-        printf("Sequential householder QR finished...\n");
+        printf("||L|| = %e\n", error3);
+	printf("Sequential householder QR finished...\n");
 
 
         // TASK15 duplicate: write results to log file
@@ -1031,6 +1047,7 @@ void test_h_block_qr() {
 
     float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
     float error2 = h_error_2(Q, m);
+    float error3 = h_error_3(R, m, n);
 
     // TASK25 duplicate: Implement following function to write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
@@ -1038,7 +1055,7 @@ void test_h_block_qr() {
     printf("Sequential block QR finished...\n");
     printf("||A - QR||/||A|| = %e\n", backward_error);
     printf("||QT @ Q - Im|| = %e\n", error2);
-
+    printf("||L|| = %e\n", error3);
     free(Q);
     free(R);
     free(A_out);
@@ -1083,6 +1100,7 @@ void test_dev_block_qr() {
 
     float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
     float error2 = h_error_2(Q, m);
+    float error3 = h_error_3(R, m, n);
 
     // TASK30 duplicate: Implement following function to write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
@@ -1090,6 +1108,7 @@ void test_dev_block_qr() {
     printf("GPU block QR finished...\n");
     printf("||A - QR||/||A|| = %e\n", backward_error);
     printf("||QT @ Q - Im|| = %e\n", error2);
+    printf("||L|| = %e\n", error3);
     
     free(Q);
     free(R);
@@ -1097,6 +1116,7 @@ void test_dev_block_qr() {
 }
 
 int main() {
+//	std::out<< "testing" << endl;
     test_dev_householder_qr();
     test_h_mmult();
     test_h_mmult_transpose_A();
