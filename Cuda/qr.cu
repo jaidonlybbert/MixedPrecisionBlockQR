@@ -29,6 +29,7 @@ SOFTWARE.
 */
 
 #include "cuda_runtime.h"
+#include "cuda_fp16.h"
 #include "device_launch_parameters.h"
 #include <cstdlib>
 #include <stdio.h>
@@ -36,6 +37,19 @@ SOFTWARE.
 #include <fstream>
 #include <string>
 #include <assert.h>
+
+void h_identity_mtx(float* I, int m, int n) {
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            if (row == col) {
+                I[row * n + col] = 1;
+            }
+            else {
+                I[row * n + col] = 0;
+            }
+        }
+    }
+}
 
 void h_mmult(float* A, float* B, float* C, int m, int n, int k) {
     /*
@@ -53,6 +67,18 @@ void h_mmult(float* A, float* B, float* C, int m, int n, int k) {
                 inner_product += A[row * k + inner_idx] * B[(inner_idx)*n + col];
             }
             C[row * n + col] = inner_product;
+        }
+    }
+}
+
+void h_mmult_transpose_A(float* A, float* B, float* C, int m) {
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < m; col++) {
+            float inner_product = 0;
+            for (int inner_idx = 0; inner_idx < m; inner_idx++) {
+                inner_product += A[(inner_idx)* m + row] * B[(inner_idx)*m + col];
+            }
+            C[row * m + col] = inner_product;
         }
     }
 }
@@ -130,13 +156,29 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
     return backward_error;
 }
 
-float h_error_2() {
+float h_error_2(float* Q, int m) {
     // TASK1 2 mike: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
-    return 0;
+    // ||Q^T @ Q - Im||
+    float* Qt_Q = (float*)malloc(m * m * sizeof(float));
+    float* Im = (float*)malloc(m * m * sizeof(float));
+    float* Qt_Q_sub_Im = (float*)malloc(m * m * sizeof(float));
+
+    h_mmult_transpose_A(Q, Q, Qt_Q, m);
+    h_identity_mtx(Im, m, m);
+    h_matrix_subtract(Qt_Q, Im, Qt_Q_sub_Im, m, m);
+
+    float error = h_matrix_norm(Qt_Q_sub_Im, m, m);
+
+    free(Qt_Q);
+    free(Im);
+    free(Qt_Q_sub_Im);
+
+    return error;
 }
 
 float h_error_3() {
     // TASK2 2 mike: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    // ||L|| < m * 2E-23
     return 0;
 }
 
@@ -379,6 +421,17 @@ __global__ void shared_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a
     }
 }
 
+//__global__
+//void dev_tensorcore_mmult_gmem(float* c_mtx, half* a_mtx, half* b_mtx, int a_width, int a_height, int b_width) {
+//    unsigned int bx = blockIdx.x;
+//    unsigned int by = blockIdx.y;
+//
+//    // Create fragments
+//    wmma::fragment<wmma::matrix_a, a_height, b_width, a_width, half, wmma::row_major> Amat;
+//    wmma::fragment<wmma::matrix_b, a_height, b_width, a_width, half, wmma::row_major> Bmat;
+//    //wmma::fragment<wmma::accumulator, a_height, b_width, a_width, float, 
+//}
+
 
 __global__ 
 void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
@@ -590,6 +643,11 @@ void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, int m, int n, int tau, 
     }
 }
 
+__global__ 
+void dev_apply_qt_to_a_tensorcore_gmem(half* dev_A, half* dev_panel_Q, int m, int n, int tau, int lambda) {
+
+}
+
 __global__
 void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int n, int lambda) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -711,7 +769,8 @@ void test_dev_householder_qr() {
     h_strip_R_from_A((float*)h_A_out, h_R, m, n);
 
     float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
-    printf("Backward error: %f\n", backward_error);
+    printf("||A - QR||/||A|| = %e\n", backward_error);
+    printf("||QT @ Q - Im|| = %e\n", h_error_2(h_Q_out, m));
     printf("GPU householder QR finished...\n");
 
     // TASK12 1 mike: Compute error
@@ -722,19 +781,6 @@ void test_dev_householder_qr() {
 
     //h_wy_transform(h_A_out, m, n, 0, n);
 
-}
-
-void h_identity_mtx(float* I, int m, int n) {
-    for (int row = 0; row < m; row++) {
-        for (int col = 0; col < n; col++) {
-            if (row == col) {
-                I[row * n + col] = 1;
-            }
-            else {
-                I[row * n + col] = 0;
-            }
-        }
-    }
 }
 
 void h_block_qr(float* A, float* Q, int m, int n, int r) {
@@ -807,6 +853,34 @@ void test_h_mmult() {
     h_mmult((float*)A, (float*)A, C, m, n, k);
 }
 
+void test_h_mmult_transpose_A() {
+    float A[3][3] = {
+    {1, 2, 3},
+    {1, 2, 3},
+    {1, 2, 3}
+    };
+
+    float expected_result[3][3] = {
+        {3, 6, 9},
+        {6, 12, 18},
+        {9, 18, 27}
+    };
+
+    int m = 3;
+    int n = 3;
+    int k = 3;
+
+    float* C = (float*)malloc(m * n * sizeof(float));
+
+    h_mmult_transpose_A((float*)A, (float*)A, C, m);
+
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < n; col++) {
+            assert((C[row * n + col] - ((float*)expected_result)[row * n + col]) < 1E-8);
+        }
+    }
+}
+
 void test_h_householder_qr() {
     /*
     * Test host version of householder QR
@@ -842,8 +916,10 @@ void test_h_householder_qr() {
         h_strip_R_from_A((float*)A_out, R, m, n);
 
         float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-        printf("Backward error: %f\n", backward_error);
+        printf("||A - QR||/||A|| = %e\n", backward_error);
+        printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
         printf("Sequential householder QR finished...\n");
+
 
         // TASK15 duplicate: write results to log file
         free(Q);
@@ -938,12 +1014,14 @@ void test_h_block_qr() {
     h_strip_R_from_A((float*)A_out, R, m, n);
 
     float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+    float error2 = h_error_2(Q, m);
 
     // TASK25 duplicate: Implement following function to write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("Sequential block QR finished...\n");
-    printf("Backward error: %f\n", backward_error);
+    printf("||A - QR||/||A|| = %e\n", backward_error);
+    printf("||QT @ Q - Im|| = %e\n", error2);
 
     free(Q);
     free(R);
@@ -958,18 +1036,18 @@ void test_dev_block_qr() {
     printf("\nTesting GPU block QR...\n");
 
     // TASK26 duplicate: use read_euroc_jacobian to load test matrices
-    float A_in[6][6] = {
-        {10,20,30,40,50,60},
-        {32,32,44,55,66,35},
-        {23,66,74,64,45,65},
-        {67,28,46,26,46,42},
-        {95,95,52,88,65,11},
-        {75,53,96,47,32,32},
+    float A_in[6][4] = {
+        {10,20,30,40},
+        {32,32,44,55},
+        {23,66,74,64},
+        {67,28,46,26},
+        {95,95,52,88},
+        {75,53,96,47},
     };
 
     int m = 6;
-    int n = 6;
-    int r = 3;
+    int n = 4;
+    int r = 2;
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
@@ -988,13 +1066,15 @@ void test_dev_block_qr() {
     h_strip_R_from_A((float*)A_out, R, m, n);
 
     float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+    float error2 = h_error_2(Q, m);
 
     // TASK30 duplicate: Implement following function to write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("GPU block QR finished...\n");
-    printf("Backward error: %f\n", backward_error);
-
+    printf("||A - QR||/||A|| = %e\n", backward_error);
+    printf("||QT @ Q - Im|| = %e\n", error2);
+    
     free(Q);
     free(R);
     free(A_out);
@@ -1003,6 +1083,7 @@ void test_dev_block_qr() {
 int main() {
     test_dev_householder_qr();
     test_h_mmult();
+    test_h_mmult_transpose_A();
     test_h_householder_qr();
     test_h_block_qr();
     test_dev_block_qr();
