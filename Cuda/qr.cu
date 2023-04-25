@@ -185,7 +185,7 @@ float h_error_3(float* R, int m, int n) {
     for (int row = 0; row < m; row++) {
         for (int col = 0; col < n; col++) {
             if (col < row){
-                L[row * n + col] = L[row * n + col];
+                L[row * n + col] = R[row * n + col];
             }
             else{
                 L[row * n + col] = 0;
