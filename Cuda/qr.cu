@@ -665,14 +665,14 @@ void dev_apply_qt_to_a_tensorcore_gmem(half* dev_A, half* dev_panel_Q, int m, in
 }
 
 __global__
-void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int n, int lambda) {
+void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int lambda) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x + lambda;
 
     if (row >= 0 && row < m && col >= lambda && col < m) {
         float inner_product = 0;
         for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-            inner_product += dev_Q[row * n + inner_dim + lambda] * dev_Q_panel[(inner_dim * (m - lambda)) + (col - lambda)];
+            inner_product += dev_Q[row * m + inner_dim + lambda] * dev_Q_panel[(inner_dim * (m - lambda)) + (col - lambda)];
         }
         dev_Q[row * m + col] = inner_product;
     }
@@ -721,7 +721,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
 
         dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim2(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
-        dev_apply_qpanel_to_q << <GridDim2, BlockDim2 >> >(dev_Q, dev_panel_Q, m, n, lambda);
+        dev_apply_qpanel_to_q << <GridDim2, BlockDim2 >> >(dev_Q, dev_panel_Q, m, lambda);
 
         cudaDeviceSynchronize();
 
@@ -839,7 +839,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
             for (int col = lambda; col < m; col++) {
                 float inner_product = 0;
                 for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += Q_old[row * n + inner_dim + lambda] * panel_Q[(inner_dim * (m-lambda)) + (col-lambda)];
+                    inner_product += Q_old[row * m + inner_dim + lambda] * panel_Q[(inner_dim * (m-lambda)) + (col-lambda)];
                 }
                 Q[row * m + col] = inner_product;
             }
@@ -905,18 +905,18 @@ void test_h_householder_qr() {
     // TASK14 3 alice: iterate over many matrix sizes, & test matrices from Tong
     printf("\nTesting sequential householder QR...\n");
 
-    float A_in[6][6] = {
-        {10,20,30,40,50,60},
-        {32,32,44,55,66,35},
-        {23,66,74,64,45,65},
-        {67,28,46,26,46,42},
-        {95,95,52,88,65,11},
-        {75,53,96,47,32,32},
+    float A_in[6][4] = {
+        {10,20,30,40},
+        {32,32,44,55},
+        {23,66,74,64},
+        {67,28,46,26},
+        {95,95,52,88},
+        {75,53,96,47},
     };
 
     int m = 6;
-    int n = 6;
-    int r = 6;
+    int n = 4;
+    int r = 4;
     for (int global_offset = 0; global_offset < 1; global_offset++) {
         float* Q = (float*)malloc(m * m * sizeof(float));
         float* R = (float*)malloc(m * n * sizeof(float));
@@ -1005,7 +1005,7 @@ float h_qr_flops_per_second(float time_ms, int m, int n) {
     * 
     * TASK21 2: Verify equation and provide academic reference for equation (textbook or paper)
     */
-    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.));
+    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms * 1000);
 }
 
 void test_h_block_qr() {
@@ -1016,18 +1016,18 @@ void test_h_block_qr() {
     printf("\nTesting sequential block QR...\n");
 
     // TASK22 1 alice: use read_euroc_jacobian to load test matrices
-    float A_in[6][6] = {
-        {10,20,30,40,50,60},
-        {32,32,44,55,66,35},
-        {23,66,74,64,45,65},
-        {67,28,46,26,46,42},
-        {95,95,52,88,65,11},
-        {75,53,96,47,32,32},
+    float A_in[6][4] = {
+        {10,20,30,40},
+        {32,32,44,55},
+        {23,66,74,64},
+        {67,28,46,26},
+        {95,95,52,88},
+        {75,53,96,47},
     };
 
     int m = 6;
-    int n = 6;
-    int r = 3;
+    int n = 4;
+    int r = 2;
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
