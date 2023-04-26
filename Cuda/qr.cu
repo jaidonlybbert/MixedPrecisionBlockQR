@@ -146,12 +146,16 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
 
     float* QR = (float*)malloc(m * n * sizeof(float));
     float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
-
+    bool pass = false;
+    const double error_limit = 1.1920928955078125e-07;
     h_mmult((float*)Q, R, QR, m, n, m);
     h_matrix_subtract((float*)A, QR, A_sub_QR, m, n);
 
     float backward_error = (h_matrix_norm(A_sub_QR, m, n) / h_matrix_norm((float*)A, m, n));
-
+    if (backward_error <= error_limit * m * h_matrix_norm((float*)A, m, n)){
+            pass = true;
+    }
+    printf("||A - QR||/||A|| = %e Error Criteria: %s\n", backward_error, pass ? "True" : "False");
     free(QR);
     free(A_sub_QR);
 
@@ -161,6 +165,8 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
 float h_error_2(float* Q, int m) {
     // TASK1 2 mike: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
     // ||Q^T @ Q - Im||
+    const double error_limit = 1.1920928955078125e-07;
+    bool pass = false;
     float* Qt_Q = (float*)malloc(m * m * sizeof(float));
     float* Im = (float*)malloc(m * m * sizeof(float));
     float* Qt_Q_sub_Im = (float*)malloc(m * m * sizeof(float));
@@ -170,6 +176,10 @@ float h_error_2(float* Q, int m) {
     h_matrix_subtract(Qt_Q, Im, Qt_Q_sub_Im, m, m);
 
     float error = h_matrix_norm(Qt_Q_sub_Im, m, m);
+    if (error <= error_limit * m){
+            pass = true;
+    }
+    printf("||QT @ Q - Im|| = %e Error Criteria: %s\n", error, pass ? "True" : "False");
 
     free(Qt_Q);
     free(Im);
@@ -181,6 +191,8 @@ float h_error_2(float* Q, int m) {
 float h_error_3(float* R, int m, int n) {
     // TASK2 2 mike: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
     // ||L|| < m * 2E-23
+    const double error_limit = 1.1920928955078125e-07;
+    bool pass = false;
     float* L = (float*)malloc(m * n * sizeof(float));
     for (int row = 0; row < m; row++) {
         for (int col = 0; col < n; col++) {
@@ -193,6 +205,10 @@ float h_error_3(float* R, int m, int n) {
         }
     }
     float error3 = (h_matrix_norm(L, m, n));
+    if (error3 <= error_limit * m){
+	    pass = true;
+    }
+    printf("||L|| = %e Error Criteria: %s\n", error3, pass ? "True" : "False");
     free(L);
 
     return error3;
@@ -786,9 +802,10 @@ void test_dev_householder_qr() {
 
     float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
     float error3 = h_error_3(h_R, m, n);
-    printf("||A - QR||/||A|| = %e\n", backward_error);
-    printf("||QT @ Q - Im|| = %e\n", h_error_2(h_Q_out, m));
-    printf("||L|| = %e\n", error3);
+    float error2 = h_error_2(h_Q_out, m);
+    //printf("||A - QR||/||A|| = %e\n", backward_error);
+    //printf("||QT @ Q - Im|| = %e\n", h_error_2(h_Q_out, m));
+    //printf("||L|| = %e\n", error3);
     printf("GPU householder QR finished...\n");
 
     // TASK12 1 mike: Compute error
@@ -935,9 +952,10 @@ void test_h_householder_qr() {
 
         float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
 	float error3 = h_error_3(R, m, n);
-        printf("||A - QR||/||A|| = %e\n", backward_error);
-        printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
-        printf("||L|| = %e\n", error3);
+	float error2 = h_error_2(Q, m);
+        //printf("||A - QR||/||A|| = %e\n", backward_error);
+        //printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
+        //printf("||L|| = %e\n", error3);
 	printf("Sequential householder QR finished...\n");
 
 
@@ -1055,9 +1073,9 @@ void test_h_block_qr() {
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("Sequential block QR finished...\n");
-    printf("||A - QR||/||A|| = %e\n", backward_error);
-    printf("||QT @ Q - Im|| = %e\n", error2);
-    printf("||L|| = %e\n", error3);
+    //printf("||A - QR||/||A|| = %e\n", backward_error);
+    //printf("||QT @ Q - Im|| = %e\n", error2);
+    //printf("||L|| = %e\n", error3);
     free(Q);
     free(R);
     free(A_out);
@@ -1108,9 +1126,9 @@ void test_dev_block_qr() {
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("GPU block QR finished...\n");
-    printf("||A - QR||/||A|| = %e\n", backward_error);
-    printf("||QT @ Q - Im|| = %e\n", error2);
-    printf("||L|| = %e\n", error3);
+   // printf("||A - QR||/||A|| = %e\n", backward_error);
+   // printf("||QT @ Q - Im|| = %e\n", error2);
+   // printf("||L|| = %e\n", error3);
     
     free(Q);
     free(R);
