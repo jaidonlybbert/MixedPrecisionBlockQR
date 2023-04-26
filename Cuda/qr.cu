@@ -785,7 +785,7 @@ void test_dev_householder_qr() {
     h_strip_R_from_A((float*)h_A_out, h_R, m, n);
 
     float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
-    float error3 = h_error_3(R, m, n);
+    float error3 = h_error_3(h_R, m, n);
     printf("||A - QR||/||A|| = %e\n", backward_error);
     printf("||QT @ Q - Im|| = %e\n", h_error_2(h_Q_out, m));
     printf("||L|| = %e\n", error3);
