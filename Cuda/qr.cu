@@ -40,6 +40,26 @@ SOFTWARE.
 #include <cstdlib>
 #include <vector>
 
+void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
+    // TASK20 2: write arguments to log file
+    std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
+    std::string line;
+    for (int i = 0; i < params.size(); i++)
+    {
+        line += std::to_string(params[i]);
+        if (i != params.size() - 1) {
+            line += ',';
+        }
+    }
+    line += "\n";
+
+
+    std::ofstream logFile;
+    logFile.open("logFile.txt", std::ios::app);
+    logFile << line;
+    logFile.close();
+}
+
 void h_identity_mtx(float* I, int m, int n) {
     for (int row = 0; row < m; row++) {
         for (int col = 0; col < n; col++) {
@@ -1001,23 +1021,6 @@ void test_h_wy_transform() {
     free(h_R);
 }
 
-void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
-    // TASK20 2: write arguments to log file
-    std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
-    std::string line;
-    for (int i = 0; i < params.size(); i++)
-    {
-        line += std::to_string(params[i]);
-        if (i != params.size() - 1) {
-            line += ',';
-        }
-    }
-    line += "\n";
-    std::ofstream logFile;
-    logFile.open("logFile.txt", std::ios::app);
-    logFile << line;
-    logFile.close();
-}
 
 float h_qr_flops_per_second(float time_ms, int m, int n) {
     /*
