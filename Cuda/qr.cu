@@ -28,11 +28,12 @@ SOFTWARE.
 *   Functions prefixed by "dev_" execute in parallel on the GPU (device)
 */
 
-#include <cuda.h>
-#include <mma.h>
+
 #include "cuda_runtime.h"
 #include "cuda_fp16.h"
 #include "device_launch_parameters.h"
+#include <cuda_runtime_api.h>
+#include <mma.h>
 #include <cstdlib>
 #include <stdio.h>
 #include <iostream>
@@ -41,6 +42,10 @@ SOFTWARE.
 #include <assert.h>
 #include <cstdlib>
 #include <vector>
+
+#define TC_TILE_M 16
+#define TC_TILE_N 16
+#define TC_TILE_K 16
 
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
     //write arguments to log file
@@ -475,40 +480,82 @@ __global__ void shared_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a
     }
 }
 
-//__global__
-//void dev_tensorcore_mmult_gmem(float* c_mtx, half* a_mtx, half* b_mtx, int a_width, int a_height, int b_width) {
-//    unsigned int bx = blockIdx.x;
-//    unsigned int by = blockIdx.y;
-//
-//    // Create fragments 
-//    nvcuda::wmma::fragment<wmma::matrix_a, a_height, b_width, a_width, half, wmma::row_major> Amat;
-//    nvcuda::wmma::fragment<wmma::matrix_b, a_height, b_width, a_width, half, wmma::row_major> Bmat;
-//    nvcuda::wmma::fragment<wmma::accumulator, a_height, b_width, a_width, float, void> Cmat;
-//
-//
-//}
-//
-//
-//void test_tensorcore_mmult_gmem() {
-//    half* a_mtx = (half*)malloc(16 * 16 * sizeof(half));
-//    half* b_mtx = (half*)malloc(16 * 16 * sizeof(half));
-//    float* c_mtx = (float*)malloc(16 * 16 * sizeof(float));
-//    half* dev_a;
-//    half* dev_b;
-//    float* dev_c;
-//
-//    cudaMalloc(&dev_a, 16 * 16 * sizeof(half));
-//    cudaMalloc(&dev_b, 16 * 16 * sizeof(half));
-//    cudaMalloc(&dev_c, 16 * 16 * sizeof(float));
-//
-//    cudaMemcpy(dev_a, a_mtx, 16 * 16 * sizeof(half), cudaMemcpyHostToDevice);
-//    cudaMemcpy(dev_b, b_mtx, 16 * 16 * sizeof(half), cudaMemcpyHostToDevice);
-//    cudaMemcpy(dev_c, c_mtx, 16 * 16 * sizeof(float), cudaMemcpyHostToDevice);
-//
-//
-//
-//
-//}
+__global__
+void dev_tensorcore_mmult_1_warp(float* c_mtx, half* a_mtx, half* b_mtx) {
+    unsigned int bx = blockIdx.x;
+    unsigned int by = blockIdx.y;
+
+    using namespace nvcuda;
+    // Create fragments 
+    wmma::fragment<wmma::matrix_a, TC_TILE_M, TC_TILE_N, TC_TILE_K, half, wmma::row_major> Amat;
+    wmma::fragment<wmma::matrix_b, TC_TILE_M, TC_TILE_N, TC_TILE_K, half, wmma::row_major> Bmat;
+    wmma::fragment<wmma::accumulator, TC_TILE_M, TC_TILE_N, TC_TILE_K, float, void> Cmat;
+
+    // Initialize output to zero
+    wmma::fill_fragment(Cmat, 0.0f);
+
+    // Load inputs
+    wmma::load_matrix_sync(Amat, a_mtx, TC_TILE_M);
+    wmma::load_matrix_sync(Bmat, b_mtx, TC_TILE_K);
+
+    // Perfrom matrix multiplication
+    wmma::mma_sync(Cmat, Amat, Bmat, Cmat);
+
+    // Store output
+    wmma::store_matrix_sync(c_mtx, Cmat, TC_TILE_N, wmma::mem_row_major);
+}
+
+
+void test_tensorcore_mmult_gmem() {
+    printf("\nTesting tensorcore 16x16x16 mmult...\n");
+
+    __half* a_mtx = (__half*)malloc(16 * 16 * sizeof(__half));
+    __half* b_mtx = (__half*)malloc(16 * 16 * sizeof(__half));
+    float* c_mtx = (float*)malloc(16 * 16 * sizeof(float));
+
+    // initialize matrices A, B, C
+    for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 16; j++) {
+            a_mtx[i * 16 + j] = (__half)(float)j;
+            b_mtx[i * 16 + j] = (__half)(float)j;
+            c_mtx[i * 16 + j] = (__half)0.0f;
+        }
+    }
+
+    // Allocate device memory
+    __half* dev_a;
+    __half* dev_b;
+    float* dev_c;
+
+    cudaMalloc(&dev_a, 16 * 16 * sizeof(__half));
+    cudaMalloc(&dev_b, 16 * 16 * sizeof(__half));
+    cudaMalloc(&dev_c, 16 * 16 * sizeof(float));
+
+    // Copy matrices from host to device
+    cudaMemcpy(dev_a, a_mtx, 16 * 16 * sizeof(__half), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_b, b_mtx, 16 * 16 * sizeof(__half), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_c, c_mtx, 16 * 16 * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Configure grid
+    dim3 gridDim(1, 1, 1);
+    dim3 blockDim(32, 1, 1); // one warp
+
+    dev_tensorcore_mmult_1_warp << <gridDim, blockDim >> > (dev_c, dev_b, dev_a);
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(c_mtx, dev_c, 16 * 16 * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // test result
+    for (int i = 0; i < 16; i++) {
+        for (int j = 0; j < 16; j++) {
+            assert(c_mtx[i * 16 + j] == j * 120);
+        }
+    }
+
+    printf("Test passed.\n");
+
+}
 
 
 __global__ 
@@ -1168,4 +1215,5 @@ int main() {
     test_h_householder_qr();
     test_h_block_qr();
     test_dev_block_qr();
+    test_tensorcore_mmult_gmem();
 }
