@@ -28,6 +28,8 @@ SOFTWARE.
 *   Functions prefixed by "dev_" execute in parallel on the GPU (device)
 */
 
+#include <cuda.h>
+#include <mma.h>
 #include "cuda_runtime.h"
 #include "cuda_fp16.h"
 #include "device_launch_parameters.h"
@@ -41,7 +43,7 @@ SOFTWARE.
 #include <vector>
 
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
-    // TASK20 2: write arguments to log file
+    //write arguments to log file
     std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
     std::string line;
     for (int i = 0; i < params.size(); i++)
@@ -183,7 +185,7 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
 }
 
 float h_error_2(float* Q, int m) {
-    // TASK1 2 mike: Compute second type of error for QR result (there are 3 types - source: paper reffered by Tong)
+
     // ||Q^T @ Q - Im||
     const double error_limit = 1.1920928955078125e-07;
     bool pass = false;
@@ -209,7 +211,7 @@ float h_error_2(float* Q, int m) {
 }
 
 float h_error_3(float* R, int m, int n) {
-    // TASK2 2 mike: Compute third type of error for QR result (there are 3 types - source: paper reffered by Tong)
+    // Compute third type of error for QR result
     // ||L|| < m * 2E-23
     const double error_limit = 1.1920928955078125e-07;
     bool pass = false;
@@ -478,10 +480,34 @@ __global__ void shared_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a
 //    unsigned int bx = blockIdx.x;
 //    unsigned int by = blockIdx.y;
 //
-//    // Create fragments
-//    wmma::fragment<wmma::matrix_a, a_height, b_width, a_width, half, wmma::row_major> Amat;
-//    wmma::fragment<wmma::matrix_b, a_height, b_width, a_width, half, wmma::row_major> Bmat;
-//    //wmma::fragment<wmma::accumulator, a_height, b_width, a_width, float, 
+//    // Create fragments 
+//    nvcuda::wmma::fragment<wmma::matrix_a, a_height, b_width, a_width, half, wmma::row_major> Amat;
+//    nvcuda::wmma::fragment<wmma::matrix_b, a_height, b_width, a_width, half, wmma::row_major> Bmat;
+//    nvcuda::wmma::fragment<wmma::accumulator, a_height, b_width, a_width, float, void> Cmat;
+//
+//
+//}
+//
+//
+//void test_tensorcore_mmult_gmem() {
+//    half* a_mtx = (half*)malloc(16 * 16 * sizeof(half));
+//    half* b_mtx = (half*)malloc(16 * 16 * sizeof(half));
+//    float* c_mtx = (float*)malloc(16 * 16 * sizeof(float));
+//    half* dev_a;
+//    half* dev_b;
+//    float* dev_c;
+//
+//    cudaMalloc(&dev_a, 16 * 16 * sizeof(half));
+//    cudaMalloc(&dev_b, 16 * 16 * sizeof(half));
+//    cudaMalloc(&dev_c, 16 * 16 * sizeof(float));
+//
+//    cudaMemcpy(dev_a, a_mtx, 16 * 16 * sizeof(half), cudaMemcpyHostToDevice);
+//    cudaMemcpy(dev_b, b_mtx, 16 * 16 * sizeof(half), cudaMemcpyHostToDevice);
+//    cudaMemcpy(dev_c, c_mtx, 16 * 16 * sizeof(float), cudaMemcpyHostToDevice);
+//
+//
+//
+//
 //}
 
 
@@ -584,7 +610,7 @@ float* h_generate_random_matrix(int height, int width) {
     float* matrix = (float*)malloc(height * width * sizeof(float));
     for (int row = 0; row < height; row++) {
         for (int col = 0; col < width; col++) {
-            matrix[row * width + col] = rand(); // TASK9 1 fulin: randomize this number
+            matrix[row * width + col] = rand(); // randomize this number
         }
     }
 
@@ -731,7 +757,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         h_householder_qr(A, m, n, lambda, r);
 
         // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK10 3 jaidon: write cuda kernel to implement WY transform on GPU
+        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
 
         // Update matrix A = Q^T @ A
         float blockWidth = 32.;
@@ -808,7 +834,7 @@ void test_dev_householder_qr() {
     // Call kernel to collaboratively copy input matrix from Global memory to Shared memory
     dim3 DimGrid(1, 1, 1);
     dim3 DimBlock(1, 1, 1);
-    // TASK11 1 alice: Time execution of the following kernel call
+    // Time execution of the following kernel call
     dev_householder_qr <<<DimGrid, DimBlock >> > (dev_A, m, n, 0);
 
     cudaDeviceSynchronize();
@@ -828,10 +854,8 @@ void test_dev_householder_qr() {
     //printf("||L|| = %e\n", error3);
     printf("GPU householder QR finished...\n");
 
-    // TASK12 1 mike: Compute error
-    // error_2()
-    // error_3()
-    // TASK13 2 flynn: Write results to log file
+
+    // Write results to log file
     //h_write_results_to_log()
 
     //h_wy_transform(h_A_out, m, n, 0, n);
@@ -956,34 +980,36 @@ void test_h_householder_qr() {
     int m = 6;
     int n = 4;
     int r = 4;
-    for (int global_offset = 0; global_offset < 1; global_offset++) {
-        float* Q = (float*)malloc(m * m * sizeof(float));
-        float* R = (float*)malloc(m * n * sizeof(float));
-        float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
-        h_matrix_cpy((float*)A_in, A_out, m, n);
+    float* Q = (float*)malloc(m * m * sizeof(float));
+    float* R = (float*)malloc(m * n * sizeof(float));
+    float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
-        //h_block_qr((float*)A, Q, m, n, r);
-        h_householder_qr((float*)A_out, m, n, global_offset, r);
+    h_matrix_cpy((float*)A_in, A_out, m, n);
 
-        h_wy_transform(A_out, &Q, m, n, global_offset, r);
+    //h_block_qr((float*)A, Q, m, n, r);
+    h_householder_qr((float*)A_out, m, n, global_offset, r);
 
-        h_strip_R_from_A((float*)A_out, R, m, n);
+    h_wy_transform(A_out, &Q, m, n, global_offset, r);
 
-        float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-	float error3 = h_error_3(R, m, n);
-	float error2 = h_error_2(Q, m);
-        //printf("||A - QR||/||A|| = %e\n", backward_error);
-        //printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
-        //printf("||L|| = %e\n", error3);
-	printf("Sequential householder QR finished...\n");
+    h_strip_R_from_A((float*)A_out, R, m, n);
+
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+    float error3 = h_error_3(R, m, n);
+    float error2 = h_error_2(Q, m);
+    //printf("||A - QR||/||A|| = %e\n", backward_error);
+    //printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
+    //printf("||L|| = %e\n", error3);
+    printf("Sequential householder QR finished...\n");
+
+    h_write_results_to_log(m, n, 0, 0, backward_error);
 
 
-        // TASK15 duplicate: write results to log file
-        free(Q);
-        free(R);
-        free(A_out);
-    }
+    // write results to log file
+    free(Q);
+    free(R);
+    free(A_out);
+
 
 
 }
@@ -991,11 +1017,11 @@ void test_h_householder_qr() {
 
 void test_h_wy_transform() {
     // Initialize test matrix A input on Host
-    // TASK16 duplicate: iterate over many matrix sizes
+    // TASK16 Alice: iterate over many matrix sizes
     int m = 3;
     int n = 3;
 
-    // TASK17 duplicate: use h_generate_random_matrix to randomize input matrix
+    // TASK17 Alice: use h_generate_random_matrix to randomize input matrix
     float h_A_in[3][3] = {
         {12, -51, 4},
         {6, 167, -68},
@@ -1014,8 +1040,6 @@ void test_h_wy_transform() {
 
     float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
 
-    // TASK19 1 : print matrix size & backward error
-
     free(h_A_out);
     free(h_Q_out);
     free(h_R);
@@ -1026,7 +1050,7 @@ float h_qr_flops_per_second(float time_ms, int m, int n) {
     /*
     * Computes FLOPs / second for householder QR given matrix dimensions and execution time
     * 
-    * TASK21 2: Verify equation and provide academic reference for equation (textbook or paper)
+    * TASK21 2 Mike: Verify equation and provide academic reference for equation (textbook or paper)
     */
     return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms * 1000);
 }
@@ -1038,7 +1062,7 @@ void test_h_block_qr() {
 
     printf("\nTesting sequential block QR...\n");
 
-    // TASK22 1 alice: use read_euroc_jacobian to load test matrices
+    // use read_euroc_jacobian to load test matrices
     float A_in[6][4] = {
         {10,20,30,40},
         {32,32,44,55},
@@ -1060,11 +1084,11 @@ void test_h_block_qr() {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    float time_ms = 0; // TASK23 1 alice: Time how long the QR function takes to execute
+    float time_ms = 0; // Time how long the QR function takes to execute
 
     h_block_qr((float*)A_out, Q, m, n, r);
 
-    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK24 duplicate: verify equation in function through research
+    float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
@@ -1072,13 +1096,11 @@ void test_h_block_qr() {
     float error2 = h_error_2(Q, m);
     float error3 = h_error_3(R, m, n);
 
-    // TASK25 duplicate: Implement following function to write results to log file
+    // write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("Sequential block QR finished...\n");
     //printf("||A - QR||/||A|| = %e\n", backward_error);
-    //printf("||QT @ Q - Im|| = %e\n", error2);
-    //printf("||L|| = %e\n", error3);
     free(Q);
     free(R);
     free(A_out);
@@ -1091,7 +1113,7 @@ void test_dev_block_qr() {
 
     printf("\nTesting GPU block QR...\n");
 
-    // TASK26 duplicate: use read_euroc_jacobian to load test matrices
+    // use read_euroc_jacobian to load test matrices
     float A_in[6][4] = {
         {10,20,30,40},
         {32,32,44,55},
@@ -1113,11 +1135,11 @@ void test_dev_block_qr() {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    float time_ms = 0; // TASK28 duplicate: Time how long the QR function takes to execute
+    float time_ms = 0; // Time how long the QR function takes to execute
 
     dev_block_qr((float*)A_out, Q, m, n, r);
 
-    float flops_per_second = h_qr_flops_per_second(time_ms, m, n); // TASK29 duplicate: verify equation in function through research
+    float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
@@ -1125,13 +1147,11 @@ void test_dev_block_qr() {
     float error2 = h_error_2(Q, m);
     float error3 = h_error_3(R, m, n);
 
-    // TASK30 duplicate: Implement following function to write results to log file
+    // write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
     printf("GPU block QR finished...\n");
    // printf("||A - QR||/||A|| = %e\n", backward_error);
-   // printf("||QT @ Q - Im|| = %e\n", error2);
-   // printf("||L|| = %e\n", error3);
     
     free(Q);
     free(R);
