@@ -981,6 +981,8 @@ void test_h_householder_qr() {
     int n = 4;
     int r = 4;
 
+    int global_offset = 0;
+
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
