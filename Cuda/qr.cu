@@ -172,6 +172,15 @@ void h_strip_R_from_A(float* A, float* R, int m, int n) {
     }
 }
 
+float h_qr_flops_per_second(float time_ms, int m, int n) {
+    /*
+    * Computes FLOPs / second for householder QR given matrix dimensions and execution time
+    *
+    * TASK21 2 Mike: Verify equation and provide academic reference for equation (textbook or paper)
+    */
+    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms * 1000);
+}
+
 float h_backward_error(float* A, float* R, float* Q, int m, int n) {
     // Computes || A - QR||/||A ||
 
@@ -887,7 +896,6 @@ void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int lambda) 
 }
 
 
-
 void dev_block_qr(float* A, float* Q, int m, int n, int r) {
     /*
     * GPU code to compute QR decomposition with Block QR algorithm
@@ -943,6 +951,118 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         // increment panel offset
         lambda = tau;
     }
+}
+
+
+void dev_block_qr_tensorcore_gmem(float* A, float* Q, int m, int n, int r) {
+    /*
+    * GPU block QR implementation using TensorCore mixed-precision matrix multiply-accumulate
+    * 
+    * TensorCore matrix multiply reads from GLOBAL memory, additional speedup possible by using SHARED memory
+    */
+
+    float* panel_Q = NULL;
+    int lambda = 0;
+    while (lambda < n) { // panel starts at lambda
+        int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
+
+        // Q is stored in factored form in lower triangular portion of dev_A
+        // R is stored in upper triangular portion of dev_A
+        h_householder_qr(A, m, n, lambda, r);
+
+        // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
+        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+
+        // Update matrix A = Q^T @ A
+        float blockWidth = 32.;
+        float blockHeight = 32.;
+
+        float* dev_A;
+        float* dev_Q;
+        float* dev_panel_Q;
+
+        cudaMalloc(&dev_A, m * n * sizeof(float));
+        cudaMalloc(&dev_Q, m * m * sizeof(float));
+        cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
+
+        cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
+
+        dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
+
+        // Update global Q
+        dev_apply_qt_to_a << <GridDim, BlockDim >> > (dev_A, dev_panel_Q, m, n, tau, lambda);
+
+        dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim2(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
+        dev_apply_qpanel_to_q << <GridDim2, BlockDim2 >> > (dev_Q, dev_panel_Q, m, lambda);
+
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(Q, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+
+        cudaFree(dev_A);
+        cudaFree(dev_panel_Q);
+        cudaFree(dev_Q);
+
+        // increment panel offset
+        lambda = tau;
+    }
+}
+
+void test_dev_block_qr_tensorcore_gmem() {
+    /*
+    * Test GPU version of block QR
+    */
+
+    printf("\nTesting Mixed-precision GPU block QR...\n");
+
+    // use read_euroc_jacobian to load test matrices
+    __half A_in[6][4] = {
+        {10.,20.,30.,40.},
+        {32.,32.,44.,55.},
+        {23.,66.,74.,64.},
+        {67.,28.,46.,26.},
+        {95.,95.,52.,88.},
+        {75.,53.,96.,47.},
+    };
+
+    int m = 6;
+    int n = 4;
+    int r = 2;
+
+    float* Q = (float*)malloc(m * m * sizeof(float));
+    float* R = (float*)malloc(m * n * sizeof(float));
+    float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
+
+    h_identity_mtx(Q, m, m);
+
+    h_matrix_cpy((float*)A_in, A_out, m, n);
+
+    float time_ms = 0; // Time how long the QR function takes to execute
+
+    dev_block_qr_tensorcore_gmem((float*)A_out, Q, m, n, r);
+
+    float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
+
+    h_strip_R_from_A((float*)A_out, R, m, n);
+
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+    float error2 = h_error_2(Q, m);
+    float error3 = h_error_3(R, m, n);
+
+    // write results to log file
+    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
+
+    printf("Mixed-precision GPU block QR finished...\n");
+   // printf("||A - QR||/||A|| = %e\n", backward_error);
+    
+    free(Q);
+    free(R);
+    free(A_out);
 }
 
 void test_dev_householder_qr() {
@@ -1194,14 +1314,7 @@ void test_h_wy_transform() {
 }
 
 
-float h_qr_flops_per_second(float time_ms, int m, int n) {
-    /*
-    * Computes FLOPs / second for householder QR given matrix dimensions and execution time
-    * 
-    * TASK21 2 Mike: Verify equation and provide academic reference for equation (textbook or paper)
-    */
-    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms * 1000);
-}
+
 
 void test_h_block_qr() {
     /*
@@ -1316,4 +1429,5 @@ int main() {
     test_dev_block_qr();
     test_tensorcore_mmult_gmem();
     test_tensorcore_mmult_tiled();
+    test_dev_block_qr_tensorcore_gmem();
 }
