@@ -518,9 +518,9 @@ void dev_tensorcore_mmult_1_warp(float* c_mtx, half* a_mtx, half* b_mtx) {
     wmma::store_matrix_sync(c_mtx, Cmat, TC_TILE_N, wmma::mem_row_major);
 }
 
-
+template <typename T_A, typename T_B, typename T_C>
 __global__
-void dev_tensorcore_mmult_tiled(float* c_mtx, half* a_mtx, half* b_mtx) {
+void dev_tensorcore_mmult_tiled(T_C* c_mtx, T_A* a_mtx, T_B* b_mtx) {
     /*
     * Tiled matrix multiply using warp matrix multiply-accumulate (wmma)
     * 
@@ -537,9 +537,9 @@ void dev_tensorcore_mmult_tiled(float* c_mtx, half* a_mtx, half* b_mtx) {
     int warp_y = y;
 
     // Create fragments
-    wmma::fragment<wmma::matrix_a, TC_TILE_M, TC_TILE_N, TC_TILE_K, half, wmma::row_major> Amat;
-    wmma::fragment<wmma::matrix_b, TC_TILE_M, TC_TILE_N, TC_TILE_K, half, wmma::row_major> Bmat;
-    wmma::fragment<wmma::accumulator, TC_TILE_M, TC_TILE_N, TC_TILE_K, float, void> Cmat;
+    wmma::fragment<wmma::matrix_a, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_A, wmma::row_major> Amat;
+    wmma::fragment<wmma::matrix_b, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_B, wmma::row_major> Bmat;
+    wmma::fragment<wmma::accumulator, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_C, void> Cmat;
 
     // Initialize output to zero
     wmma::fill_fragment(Cmat, 0.0f);
@@ -547,8 +547,8 @@ void dev_tensorcore_mmult_tiled(float* c_mtx, half* a_mtx, half* b_mtx) {
     // Compute tiled matrix multiply for warp
     for (int phase = 0; phase < A_MTX_WIDTH / TC_TILE_K; phase++) {
         // Load inputs
-        half* a_idx = &a_mtx[warp_y * A_MTX_WIDTH * TC_TILE_M + phase * TC_TILE_K];
-        half* b_idx = &b_mtx[phase * B_MTX_WIDTH * TC_TILE_K + warp_x * TC_TILE_N];
+        T_A* a_idx = &a_mtx[warp_y * A_MTX_WIDTH * TC_TILE_M + phase * TC_TILE_K];
+        T_B* b_idx = &b_mtx[phase * B_MTX_WIDTH * TC_TILE_K + warp_x * TC_TILE_N];
 
         wmma::load_matrix_sync(Amat, a_idx, A_MTX_WIDTH);
         wmma::load_matrix_sync(Bmat, b_idx, B_MTX_WIDTH);
@@ -558,7 +558,7 @@ void dev_tensorcore_mmult_tiled(float* c_mtx, half* a_mtx, half* b_mtx) {
     }
 
     // Write output
-    float* c_idx = &c_mtx[warp_y * B_MTX_WIDTH * TC_TILE_M + warp_x * TC_TILE_N];
+    T_C* c_idx = &c_mtx[warp_y * B_MTX_WIDTH * TC_TILE_M + warp_x * TC_TILE_N];
     wmma::store_matrix_sync(c_idx, Cmat, B_MTX_WIDTH, wmma::mem_row_major);
 }
 
@@ -612,6 +612,76 @@ void test_tensorcore_mmult_gmem() {
 
     printf("Test passed.\n");
 
+}
+
+template <typename T_A, typename T_B, typename T_C>
+void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int m, int n, int k) {
+    /*
+    * Performs tiled matrix multiply C = A@B with TensorCore
+    * 
+    * Dimensions of A: mxk
+    * Dimensions of B: kxn
+    * Dimensions of C: mxn
+    */
+
+    // Allocate input & output matrices on device
+    size_t a_bytes = m * k * sizeof(T_A);
+    size_t b_bytes = k * n * sizeof(T_B);
+    size_t c_bytes = m * n * sizeof(T_C);
+
+    // Allocate device memory
+    T_A* dev_a;
+    T_B* dev_b;
+    T_C* dev_c;
+
+    cudaMalloc(&dev_a, a_bytes);
+    cudaMalloc(&dev_b, b_bytes);
+    cudaMalloc(&dev_c, c_bytes);
+
+    // Copy matrices from host to device
+    cudaMemcpy(dev_a, a_mtx, a_bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_b, b_mtx, b_bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_c, c_mtx, c_bytes, cudaMemcpyHostToDevice);
+
+    // Configure grid
+    dim3 gridDim(1, 1, 1);
+    dim3 blockDim(64, 2, 1); // one warp
+
+    dev_tensorcore_mmult_tiled<T_A, T_B, T_C> << <gridDim, blockDim >> > (dev_c, dev_b, dev_a);
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(c_mtx, dev_c, c_bytes, cudaMemcpyDeviceToHost);
+}
+
+template void h_launch_dev_tensorcore_mmult_tiled<half, half, float>(half*, half*, float*, int, int, int);
+
+void test_template_tensorcore_mmult_tiled() {
+    printf("\nTesting template tensorcore tiled mmult...\n");
+
+    __half* a_mtx = (__half*)malloc(32 * 32 * sizeof(__half));
+    __half* b_mtx = (__half*)malloc(32 * 32 * sizeof(__half));
+    float* c_mtx = (float*)malloc(32 * 32 * sizeof(float));
+
+    // initialize matrices A, B, C
+    for (int i = 0; i < 32; i++) {
+        for (int j = 0; j < 32; j++) {
+            a_mtx[i * 32 + j] = (__half)(float)j;
+            b_mtx[i * 32 + j] = (__half)(float)j;
+            c_mtx[i * 32 + j] = (__half)0.0f;
+        }
+    }
+
+    h_launch_dev_tensorcore_mmult_tiled<half, half, float>(a_mtx, b_mtx, c_mtx, 32, 32, 32);
+
+    // test result
+    for (int i = 0; i < 32; i++) {
+        for (int j = 0; j < 32; j++) {
+            assert(c_mtx[i * 32 + j] == j * 496);
+        }
+    }
+
+    printf("Test passed.\n");
 }
 
 void test_tensorcore_mmult_tiled() {
@@ -1429,5 +1499,6 @@ int main() {
     test_dev_block_qr();
     test_tensorcore_mmult_gmem();
     test_tensorcore_mmult_tiled();
+    test_template_tensorcore_mmult_tiled();
     test_dev_block_qr_tensorcore_gmem();
 }
