@@ -51,6 +51,11 @@ SOFTWARE.
 #define B_MTX_WIDTH 32
 #define WARP_SIZE 32
 
+// Thread block sizes for TC MMULT
+// Shrink to get more shared memory per warp, expand to increase memory re-use
+#define TC_MMULT_THREAD_BLOCK_WIDTH 4 * WARP_SIZE
+#define TC_MMULT_THREAD_BLOCK_HEIGHT 4
+
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
     //write arguments to log file
     std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
@@ -520,7 +525,7 @@ void dev_tensorcore_mmult_1_warp(float* c_mtx, half* a_mtx, half* b_mtx) {
 
 template <typename T_A, typename T_B, typename T_C>
 __global__
-void dev_tensorcore_mmult_tiled(T_C* c_mtx, T_A* a_mtx, T_B* b_mtx) {
+void dev_tensorcore_mmult_tiled(T_C* c_mtx, T_A* a_mtx, T_B* b_mtx, int m, int n, int k) {
     /*
     * Tiled matrix multiply using warp matrix multiply-accumulate (wmma)
     * 
@@ -536,30 +541,32 @@ void dev_tensorcore_mmult_tiled(T_C* c_mtx, T_A* a_mtx, T_B* b_mtx) {
     int warp_x = x / WARP_SIZE;
     int warp_y = y;
 
-    // Create fragments
-    wmma::fragment<wmma::matrix_a, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_A, wmma::row_major> Amat;
-    wmma::fragment<wmma::matrix_b, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_B, wmma::row_major> Bmat;
-    wmma::fragment<wmma::accumulator, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_C, void> Cmat;
+    if (warp_x < n / TC_TILE_N && warp_y < TC_TILE_M) {
+        // Create fragments
+        wmma::fragment<wmma::matrix_a, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_A, wmma::row_major> Amat;
+        wmma::fragment<wmma::matrix_b, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_B, wmma::row_major> Bmat;
+        wmma::fragment<wmma::accumulator, TC_TILE_M, TC_TILE_N, TC_TILE_K, T_C, void> Cmat;
 
-    // Initialize output to zero
-    wmma::fill_fragment(Cmat, 0.0f);
+        // Initialize output to zero
+        wmma::fill_fragment(Cmat, 0.0f);
 
-    // Compute tiled matrix multiply for warp
-    for (int phase = 0; phase < A_MTX_WIDTH / TC_TILE_K; phase++) {
-        // Load inputs
-        T_A* a_idx = &a_mtx[warp_y * A_MTX_WIDTH * TC_TILE_M + phase * TC_TILE_K];
-        T_B* b_idx = &b_mtx[phase * B_MTX_WIDTH * TC_TILE_K + warp_x * TC_TILE_N];
+        // Compute tiled matrix multiply for warp
+        for (int phase = 0; phase < A_MTX_WIDTH / TC_TILE_K; phase++) {
+            // Load inputs
+            T_A* a_idx = &a_mtx[warp_y * A_MTX_WIDTH * TC_TILE_M + phase * TC_TILE_K];
+            T_B* b_idx = &b_mtx[phase * B_MTX_WIDTH * TC_TILE_K + warp_x * TC_TILE_N];
 
-        wmma::load_matrix_sync(Amat, a_idx, A_MTX_WIDTH);
-        wmma::load_matrix_sync(Bmat, b_idx, B_MTX_WIDTH);
+            wmma::load_matrix_sync(Amat, a_idx, A_MTX_WIDTH);
+            wmma::load_matrix_sync(Bmat, b_idx, B_MTX_WIDTH);
 
-        // Perfrom matrix multiplication, accumulate into C
-        wmma::mma_sync(Cmat, Amat, Bmat, Cmat);
+            // Perfrom matrix multiplication, accumulate into C
+            wmma::mma_sync(Cmat, Amat, Bmat, Cmat);
+        }
+
+        // Write output
+        T_C* c_idx = &c_mtx[warp_y * B_MTX_WIDTH * TC_TILE_M + warp_x * TC_TILE_N];
+        wmma::store_matrix_sync(c_idx, Cmat, B_MTX_WIDTH, wmma::mem_row_major);
     }
-
-    // Write output
-    T_C* c_idx = &c_mtx[warp_y * B_MTX_WIDTH * TC_TILE_M + warp_x * TC_TILE_N];
-    wmma::store_matrix_sync(c_idx, Cmat, B_MTX_WIDTH, wmma::mem_row_major);
 }
 
 
@@ -643,11 +650,19 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
     cudaMemcpy(dev_b, b_mtx, b_bytes, cudaMemcpyHostToDevice);
     cudaMemcpy(dev_c, c_mtx, c_bytes, cudaMemcpyHostToDevice);
 
-    // Configure grid
-    dim3 gridDim(1, 1, 1);
-    dim3 blockDim(64, 2, 1); // one warp
+    // Configure grid of "warp blocks" which overlay output C
+    int warp_grid_height = m / TC_TILE_M;
+    int warp_grid_width = n / TC_TILE_N;
 
-    dev_tensorcore_mmult_tiled<T_A, T_B, T_C> << <gridDim, blockDim >> > (dev_c, dev_b, dev_a);
+    // Configure grid of thread blocks
+    int grid_height = warp_grid_height / TC_MMULT_THREAD_BLOCK_HEIGHT + (warp_grid_height % TC_MMULT_THREAD_BLOCK_HEIGHT != 0); // Integer div. rounded up
+    int grid_width = warp_grid_width / TC_MMULT_THREAD_BLOCK_WIDTH + (warp_grid_width % TC_MMULT_THREAD_BLOCK_WIDTH != 0);
+
+    // Configure grid
+    dim3 gridDim(grid_height, grid_width, 1);
+    dim3 blockDim(TC_MMULT_THREAD_BLOCK_WIDTH, TC_MMULT_THREAD_BLOCK_HEIGHT, 1); // one warp
+
+    dev_tensorcore_mmult_tiled<T_A, T_B, T_C> << <gridDim, blockDim >> > (dev_c, dev_b, dev_a, m, n, k);
 
     cudaDeviceSynchronize();
 
@@ -718,7 +733,7 @@ void test_tensorcore_mmult_tiled() {
     dim3 gridDim(1, 1, 1);
     dim3 blockDim(64, 2, 1); // one warp
 
-    dev_tensorcore_mmult_tiled << <gridDim, blockDim >> > (dev_c, dev_b, dev_a);
+    dev_tensorcore_mmult_tiled << <gridDim, blockDim >> > (dev_c, dev_b, dev_a, 32, 32, 32);
 
     cudaDeviceSynchronize();
 
