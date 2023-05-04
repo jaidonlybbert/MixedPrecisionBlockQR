@@ -1,5 +1,5 @@
 /*
-Copyright (c) 2023 Jaidon Lybbert
+Copyright (c) 2023 Jaidon Lybbert <jaidonlybbert@gmail.com>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -46,15 +46,16 @@ SOFTWARE.
 #define TC_TILE_M 16
 #define TC_TILE_N 16
 #define TC_TILE_K 16
-#define A_MTX_WIDTH 32
-#define A_MTX_HEIGHT 32
-#define B_MTX_WIDTH 32
 #define WARP_SIZE 32
 
 // Thread block sizes for TC MMULT
 // Shrink to get more shared memory per warp, expand to increase memory re-use
 #define TC_MMULT_THREAD_BLOCK_WIDTH 4 * WARP_SIZE
 #define TC_MMULT_THREAD_BLOCK_HEIGHT 4
+
+// Thread block sizes for array cpy
+#define CPY_ARRAY_BLOCK_WIDTH 32
+#define CPY_ARRAY_BLOCK_HEIGHT 32
 
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
     //write arguments to log file
@@ -621,6 +622,50 @@ void test_tensorcore_mmult_gmem() {
 
 }
 
+template <typename T>
+__global__
+void dev_cpy_strided_array(T* dest, T* src, int dest_height, int dest_width, int src_height, int src_width) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (row < src_height && col < src_width) {
+        dest[row * dest_width + col] = src[row * src_width + col];
+    }
+    else if (row < dest_height && col < dest_width) {
+        dest[row * dest_width + col] = (T)0.0;
+    }
+}
+
+template <typename T>
+void h_launch_cpy_strided_array(T* h_dest, T* h_src, int dest_height, int dest_width, int src_height, int src_width) {
+
+    // Allocate device memory
+    T* dev_dest;
+    T* dev_src;
+
+    cudaMalloc(&dev_dest, dest_width * dest_height * sizeof(T));
+    cudaMalloc(&dev_src, src_width * src_height * sizeof(T));
+
+    cudaMemcpy(dev_src, h_src, src_width * src_height * sizeof(T), cudaMemcpyHostToDevice);
+
+    // Configure grid of thread blocks
+    int grid_height = dest_height / CPY_ARRAY_BLOCK_HEIGHT +
+        (dest_height % CPY_ARRAY_BLOCK_HEIGHT != 0); // Integer div. rounded up
+    int grid_width = dest_width / CPY_ARRAY_BLOCK_WIDTH +
+        (dest_width % CPY_ARRAY_BLOCK_WIDTH != 0);
+
+    dim3 gridDim(grid_height, grid_width, 1);
+    dim3 blockDim(CPY_ARRAY_BLOCK_WIDTH, CPY_ARRAY_BLOCK_HEIGHT, 1);
+    dev_cpy_strided_array<T> << <gridDim, blockDim >> > (dev_dest, dev_src, dest_height, dest_width, src_height, src_width);
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(h_dest, dev_dest, dest_height * dest_width * sizeof(T), cudaMemcpyDeviceToHost);
+    
+    cudaFree(dev_dest);
+    cudaFree(dev_src);
+}
+
 template <typename T_A, typename T_B, typename T_C>
 void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int m, int n, int k) {
     /*
@@ -631,12 +676,28 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
     * Dimensions of C: mxn
     */
 
-    // Allocate input & output matrices on device
-    size_t a_bytes = m * k * sizeof(T_A);
-    size_t b_bytes = k * n * sizeof(T_B);
-    size_t c_bytes = m * n * sizeof(T_C);
+    // Allocation size must be integer multiple of TC tile size
+    int m_padded = (m % TC_TILE_M) ? m + (TC_TILE_M - m % TC_TILE_M): m; // Padded height of A & C
+    int n_padded = (n % TC_TILE_N) ? n + (TC_TILE_N - n % TC_TILE_N): n; // Padded width of B & C
+    int k_padded = (k % TC_TILE_K) ? k + (TC_TILE_K - k % TC_TILE_K): k; // Padded inner dimension
 
-    // Allocate device memory
+    // Matrix sizes in bytes
+    size_t a_bytes = m_padded * k_padded * sizeof(T_A);
+    size_t b_bytes = k_padded * n_padded * sizeof(T_B);
+    size_t c_bytes = m_padded * n_padded * sizeof(T_C);
+
+    // Allocate host-side padded arrays
+    T_A* h_a = (T_A*)malloc(a_bytes);
+    T_B* h_b = (T_B*)malloc(b_bytes);
+    T_C* h_c = (T_C*)malloc(c_bytes);
+
+    // Pad arrays
+    h_launch_cpy_strided_array<T_A>(h_a, a_mtx, m_padded, k_padded, m, k);
+    h_launch_cpy_strided_array<T_B>(h_b, b_mtx, k_padded, n_padded, k, n);
+    // Set output to zeros
+    memset(h_c, 0, c_bytes);
+
+    // Allocate input & output matrices on device
     T_A* dev_a;
     T_B* dev_b;
     T_C* dev_c;
@@ -646,27 +707,31 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
     cudaMalloc(&dev_c, c_bytes);
 
     // Copy matrices from host to device
-    cudaMemcpy(dev_a, a_mtx, a_bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_b, b_mtx, b_bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_c, c_mtx, c_bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_a, h_a, a_bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_b, h_b, b_bytes, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_c, h_c, c_bytes, cudaMemcpyHostToDevice);
 
     // Configure grid of "warp blocks" which overlay output C
-    int warp_grid_height = m / TC_TILE_M;
-    int warp_grid_width = n / TC_TILE_N;
+    int warp_grid_height = m / TC_TILE_M + (m % TC_TILE_M != 0);
+    int warp_grid_width = n / TC_TILE_N + (n % TC_TILE_N != 0);
 
     // Configure grid of thread blocks
-    int grid_height = warp_grid_height / TC_MMULT_THREAD_BLOCK_HEIGHT + (warp_grid_height % TC_MMULT_THREAD_BLOCK_HEIGHT != 0); // Integer div. rounded up
-    int grid_width = warp_grid_width / TC_MMULT_THREAD_BLOCK_WIDTH + (warp_grid_width % TC_MMULT_THREAD_BLOCK_WIDTH != 0);
+    int grid_height = warp_grid_height / TC_MMULT_THREAD_BLOCK_HEIGHT + 
+                      (warp_grid_height % TC_MMULT_THREAD_BLOCK_HEIGHT != 0); // Integer div. rounded up
+    int grid_width = warp_grid_width * WARP_SIZE / TC_MMULT_THREAD_BLOCK_WIDTH + 
+                     (warp_grid_width % TC_MMULT_THREAD_BLOCK_WIDTH != 0);
 
     // Configure grid
     dim3 gridDim(grid_height, grid_width, 1);
-    dim3 blockDim(TC_MMULT_THREAD_BLOCK_WIDTH, TC_MMULT_THREAD_BLOCK_HEIGHT, 1); // one warp
+    dim3 blockDim(TC_MMULT_THREAD_BLOCK_WIDTH, TC_MMULT_THREAD_BLOCK_HEIGHT, 1);
 
     dev_tensorcore_mmult_tiled<T_A, T_B, T_C> << <gridDim, blockDim >> > (dev_c, dev_b, dev_a, m, n, k);
 
     cudaDeviceSynchronize();
 
-    cudaMemcpy(c_mtx, dev_c, c_bytes, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_c, dev_c, c_bytes, cudaMemcpyDeviceToHost);
+
+    h_launch_cpy_strided_array<T_C>(c_mtx, h_c, m, n, m_padded, n_padded);
 }
 
 template void h_launch_dev_tensorcore_mmult_tiled<half, half, float>(half*, half*, float*, int, int, int);
@@ -674,25 +739,30 @@ template void h_launch_dev_tensorcore_mmult_tiled<half, half, float>(half*, half
 void test_template_tensorcore_mmult_tiled() {
     printf("\nTesting template tensorcore tiled mmult...\n");
 
-    __half* a_mtx = (__half*)malloc(32 * 32 * sizeof(__half));
-    __half* b_mtx = (__half*)malloc(32 * 32 * sizeof(__half));
-    float* c_mtx = (float*)malloc(32 * 32 * sizeof(float));
+    
+    int m = 33;
+    int n = 33;
+    int k = 33;
+
+    __half* a_mtx = (__half*)malloc(m * k * sizeof(__half));
+    __half* b_mtx = (__half*)malloc(k * n * sizeof(__half));
+    float* c_mtx = (float*)malloc(m * n * sizeof(float));
 
     // initialize matrices A, B, C
-    for (int i = 0; i < 32; i++) {
-        for (int j = 0; j < 32; j++) {
-            a_mtx[i * 32 + j] = (__half)(float)j;
-            b_mtx[i * 32 + j] = (__half)(float)j;
-            c_mtx[i * 32 + j] = (__half)0.0f;
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            a_mtx[i * n + j] = (__half)(float)j;
+            b_mtx[i * n + j] = (__half)(float)j;
+            c_mtx[i * n + j] = (float)0.0f;
         }
     }
 
-    h_launch_dev_tensorcore_mmult_tiled<half, half, float>(a_mtx, b_mtx, c_mtx, 32, 32, 32);
+    h_launch_dev_tensorcore_mmult_tiled<half, half, float>(a_mtx, b_mtx, c_mtx, m, n, n);
 
     // test result
-    for (int i = 0; i < 32; i++) {
-        for (int j = 0; j < 32; j++) {
-            assert(c_mtx[i * 32 + j] == j * 496);
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            assert(c_mtx[i * n + j] == j * 528);
         }
     }
 
