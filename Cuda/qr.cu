@@ -376,10 +376,10 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         // Im - WY^T (classic "triply-nested-loop")
         // Flops: (m-global_offset)x(m-global_offset)x(i)
         for (int row = 0; row < m - global_offset; row++) { // rows of W_Yt
-            for (int col = 0; col < m - global_offset; col++) { // cols of W_Yt
+            for (int col = i; col < m - global_offset; col++) { // cols of W_Yt
                 // compute each inner product
                 float inner_product = 0;
-                for (int idx = 0; idx < i; idx++) { // rows of W
+                for (int idx = 0; idx < i; idx++) { // idx of columns of W
                     inner_product += W[row * panel_width + idx] * Y[col * panel_width + idx];
                 }
                 if (row == col) { // Im is 1
