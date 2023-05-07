@@ -28,12 +28,14 @@ SOFTWARE.
 *   Functions prefixed by "dev_" execute in parallel on the GPU (device)
 */
 
-
+// CUDA includes
 #include "cuda_runtime.h"
 #include "cuda_fp16.h"
 #include "device_launch_parameters.h"
 #include <cuda_runtime_api.h>
+#include <nvtx3/nvToolsExt.h>
 #include <mma.h>
+
 #include <cstdlib>
 #include <stdio.h>
 #include <iostream>
@@ -184,7 +186,7 @@ float h_qr_flops_per_second(float time_ms, int m, int n) {
     *
     * TASK21 2 Mike: Verify equation and provide academic reference for equation (textbook or paper)
     */
-    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms * 1000);
+    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms / 1000);
 }
 
 float h_backward_error(float* A, float* R, float* Q, int m, int n) {
@@ -363,11 +365,16 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         W[i * panel_width] = 2 * h_A[(i + global_offset + 1) * n + global_offset];
     }
 
+    // FLOPs: (panel_width)x
+    //        Sum_i((m-global_offset)x(m-global_offset)x(i) + (m-global_offset)x(m-global_offset-i) + (m-global_offset)) +
+    //        (m-global_offset)x(m-global_offset)xpanel_width
+
     // Iterate over columns of panel and update W, Y
     for (int i = 1; i < panel_width; i++) { // cols of panel
         // Calculate z = 2 * (I_m - WY^T)w_i
 
         // Im - WY^T (classic "triply-nested-loop")
+        // Flops: (m-global_offset)x(m-global_offset)x(i)
         for (int row = 0; row < m - global_offset; row++) { // rows of W_Yt
             for (int col = 0; col < m - global_offset; col++) { // cols of W_Yt
                 // compute each inner product
@@ -385,6 +392,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         }
 
         // 2 * (Im - WY^T)w_i (matrix-vector product)
+        // Flops: (m-global_offset)x(m-global_offset-i)
         for (int row = 0; row < (m - global_offset); row++) {
             float inner_product = 0;
             for (int col = i; col < (m - global_offset); col++) {
@@ -394,6 +402,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         }
 
         // Copy z to W
+        // Flops: (m-global_offset)
         for (int idx = 0; idx < (m - global_offset); idx++) {
             if (idx < (i)) {
                 Y[idx * panel_width + i] = 0;
@@ -406,6 +415,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     }
 
     // Im - WY^T (classic "triply-nested-loop")
+    // Flops: (m-global_offset)x(m-global_offset)xpanel_width
     for (int row = 0; row < m - global_offset; row++) { // rows of W_Yt
         for (int col = 0; col < m - global_offset; col++) { // cols of W_Yt
             // compute each inner product
@@ -1419,18 +1429,22 @@ void test_h_householder_qr() {
     // TASK14 3 alice: iterate over many matrix sizes, & test matrices from Tong
     printf("\nTesting sequential householder QR...\n");
 
-    float A_in[6][4] = {
-        {10,20,30,40},
-        {32,32,44,55},
-        {23,66,74,64},
-        {67,28,46,26},
-        {95,95,52,88},
-        {75,53,96,47},
-    };
+    //float A_in[6][4] = {
+    //    {10,20,30,40},
+    //    {32,32,44,55},
+    //    {23,66,74,64},
+    //    {67,28,46,26},
+    //    {95,95,52,88},
+    //    {75,53,96,47},
+    //};
 
-    int m = 6;
-    int n = 4;
-    int r = 4;
+    int m = 600;
+    int n = 400;
+    int r = 10;
+
+    printf("Dimensions of A: %dx%d\n", m, n);
+
+    float* A_in = h_generate_random_matrix(m, n);
 
     int global_offset = 0;
 
@@ -1441,9 +1455,17 @@ void test_h_householder_qr() {
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
     //h_block_qr((float*)A, Q, m, n, r);
-    h_householder_qr((float*)A_out, m, n, global_offset, r);
+    clock_t cycles = clock();
+    h_householder_qr((float*)A_out, m, n, global_offset, n);
+    cycles = clock() - cycles;
 
-    h_wy_transform(A_out, &Q, m, n, global_offset, r);
+    float time_ms_r = cycles * 1000 / CLOCKS_PER_SEC;
+    float flops = h_qr_flops_per_second(time_ms_r, m, n);
+
+    cycles = clock();
+    h_wy_transform(A_out, &Q, m, n, global_offset, n);
+    cycles = clock() - cycles;
+    float time_ms_q = cycles * 1000 / CLOCKS_PER_SEC;
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
@@ -1453,7 +1475,9 @@ void test_h_householder_qr() {
     //printf("||A - QR||/||A|| = %e\n", backward_error);
     //printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
     //printf("||L|| = %e\n", error3);
-    printf("Sequential householder QR finished...\n");
+    printf("Averaged %.2f GFLOPs\n", flops / 1E9);
+    printf("Sequential householder R finished in %.2f ms\n", time_ms_r);
+    printf("Sequential wy-transformation finished in %.2f ms\n", time_ms_q);
 
     h_write_results_to_log(m, n, 0, 0, backward_error);
 
@@ -1560,18 +1584,26 @@ void test_dev_block_qr() {
     printf("\nTesting GPU block QR...\n");
 
     // use read_euroc_jacobian to load test matrices
-    float A_in[6][4] = {
-        {10,20,30,40},
-        {32,32,44,55},
-        {23,66,74,64},
-        {67,28,46,26},
-        {95,95,52,88},
-        {75,53,96,47},
-    };
+    //float A_in[6][4] = {
+    //    {10,20,30,40},
+    //    {32,32,44,55},
+    //    {23,66,74,64},
+    //    {67,28,46,26},
+    //    {95,95,52,88},
+    //    {75,53,96,47},
+    //};
 
-    int m = 6;
-    int n = 4;
-    int r = 2;
+    //int m = 6;
+    //int n = 4;
+    //int r = 2;
+
+    int m = 600;
+    int n = 400;
+    int r = 10;
+
+    printf("Dimensions of A: %dx%d\n", m, n);
+
+    float* A_in = h_generate_random_matrix(m, n);
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
@@ -1581,11 +1613,13 @@ void test_dev_block_qr() {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    float time_ms = 0; // Time how long the QR function takes to execute
-
+    clock_t cycles = clock(); // Time how long the QR function takes to execute
     dev_block_qr((float*)A_out, Q, m, n, r);
+    cycles = clock() - cycles;
 
-    float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
+    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+
+    float flops = h_qr_flops_per_second(time_ms, m, n);
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
@@ -1594,9 +1628,11 @@ void test_dev_block_qr() {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
+    h_write_results_to_log(m, n, time_ms, flops, backward_error);
 
     printf("GPU block QR finished...\n");
+    printf("Averaged %.2f GFLOPs\n", flops / 1E9);
+    printf("GPU Block QR finished in %.2f ms...\n", time_ms);
    // printf("||A - QR||/||A|| = %e\n", backward_error);
     
     free(Q);
