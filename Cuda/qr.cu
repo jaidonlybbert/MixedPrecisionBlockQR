@@ -359,11 +359,16 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     float* z = (float*)malloc((m - global_offset) * sizeof(float));
     float* W_Yt = (float*)malloc((m - global_offset) * (m - global_offset) * sizeof(float)); // temporary matrix W * Y^T
 
+    // Dimensions of final result Im - WY^T, square
+    int W_Yt_dim = m - global_offset;
+
     // Y = w_1
-    for (int i = 0; i < m - global_offset; i++) {
+    for (int i = 0; i < W_Yt_dim; i++) {
         Y[i * panel_width] = h_A[(i + global_offset + 1) * n + global_offset];
         W[i * panel_width] = 2 * h_A[(i + global_offset + 1) * n + global_offset];
     }
+
+    clock_t cycles = clock();
 
     // FLOPs: (panel_width)x
     //        Sum_i((m-global_offset)x(m-global_offset)x(i) + (m-global_offset)x(m-global_offset-i) + (m-global_offset)) +
@@ -372,38 +377,39 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     // Iterate over columns of panel and update W, Y
     for (int i = 1; i < panel_width; i++) { // cols of panel
         // Calculate z = 2 * (I_m - WY^T)w_i
-
         // Im - WY^T (classic "triply-nested-loop")
         // Flops: (m-global_offset)x(m-global_offset)x(i)
-        for (int row = 0; row < m - global_offset; row++) { // rows of W_Yt
-            for (int col = i; col < m - global_offset; col++) { // cols of W_Yt
+        for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
+            int row_offset = row * panel_width;
+            for (int col = i; col < W_Yt_dim; col++) { // cols of W_Yt
+                int col_offset = col * panel_width;
                 // compute each inner product
                 float inner_product = 0;
                 for (int idx = 0; idx < i; idx++) { // idx of columns of W
-                    inner_product += W[row * panel_width + idx] * Y[col * panel_width + idx];
+                    inner_product += W[row_offset + idx] * Y[col_offset + idx];
                 }
                 if (row == col) { // Im is 1
-                    W_Yt[row * (m - global_offset) + col] = 1 - inner_product; // Im - WY^T
+                    W_Yt[row * W_Yt_dim + col] = 1 - inner_product; // Im - WY^T
                 }
                 else { // Im is zero
-                    W_Yt[row * (m - global_offset) + col] = -inner_product;
+                    W_Yt[row * W_Yt_dim + col] = -inner_product;
                 }
             }
         }
 
         // 2 * (Im - WY^T)w_i (matrix-vector product)
         // Flops: (m-global_offset)x(m-global_offset-i)
-        for (int row = 0; row < (m - global_offset); row++) {
+        for (int row = 0; row < W_Yt_dim; row++) {
             float inner_product = 0;
-            for (int col = i; col < (m - global_offset); col++) {
-                inner_product += W_Yt[row * (m - global_offset) + col] * h_A[(global_offset + col + 1) * n + global_offset + i];
+            for (int col = i; col < W_Yt_dim; col++) {
+                inner_product += W_Yt[row * W_Yt_dim + col] * h_A[(global_offset + col + 1) * n + global_offset + i];
             }
             z[row] = 2 * inner_product;
         }
 
         // Copy z to W
         // Flops: (m-global_offset)
-        for (int idx = 0; idx < (m - global_offset); idx++) {
+        for (int idx = 0; idx < W_Yt_dim; idx++) {
             if (idx < (i)) {
                 Y[idx * panel_width + i] = 0;
             }
@@ -413,24 +419,36 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
             W[idx * panel_width + i] = z[idx];
         }
     }
+    
+    cycles = clock() - cycles;
+    float time_ms_wy = cycles * 1000 / CLOCKS_PER_SEC;
+    printf("WY built in %.2e ms\n", time_ms_wy);
+
+    cycles = clock();
 
     // Im - WY^T (classic "triply-nested-loop")
     // Flops: (m-global_offset)x(m-global_offset)xpanel_width
-    for (int row = 0; row < m - global_offset; row++) { // rows of W_Yt
-        for (int col = 0; col < m - global_offset; col++) { // cols of W_Yt
+    for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
+        for (int col = 0; col < W_Yt_dim; col++) { // cols of W_Yt
+            // determine inner dimension length
+            int inner_dim = (col + 1 < panel_width) ? col + 1 : panel_width;
             // compute each inner product
             float inner_product = 0;
-            for (int idx = 0; idx < panel_width; idx++) { // cols of W
+            for (int idx = 0; idx < inner_dim; idx++) { // cols of W
                 inner_product += W[row * panel_width + idx] * Y[col * panel_width + idx];
             }
             if (row == col) { // Im is 1
-                W_Yt[row * (m - global_offset) + col] = 1 - inner_product; // Im - WY^T
+                W_Yt[row * W_Yt_dim + col] = 1 - inner_product; // Im - WY^T
             }
             else { // Im is zero
-                W_Yt[row * (m - global_offset) + col] = -inner_product;
+                W_Yt[row * W_Yt_dim + col] = -inner_product;
             }
         }
     }
+
+    cycles = clock() - cycles;
+    time_ms_wy = cycles * 1000 / CLOCKS_PER_SEC;
+    printf("Q built from wy in %.2e ms\n", time_ms_wy);
 
     free(W);
     free(Y);
