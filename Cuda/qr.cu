@@ -215,7 +215,7 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
 float h_error_2(float* Q, int m) {
 
     // ||Q^T @ Q - Im||
-    const double error_limit = 1.1920928955078125e-07;
+    const double error_limit = pow<double>(2, -22);//1.1920928955078125e-07;
     bool pass = false;
     float* Qt_Q = (float*)malloc(m * m * sizeof(float));
     float* Im = (float*)malloc(m * m * sizeof(float));
@@ -225,17 +225,28 @@ float h_error_2(float* Q, int m) {
     h_identity_mtx(Im, m, m);
     h_matrix_subtract(Qt_Q, Im, Qt_Q_sub_Im, m, m);
 
-    float error = h_matrix_norm(Qt_Q_sub_Im, m, m);
-    if (error <= error_limit * m){
+    float max_error = 0;
+    for (int row = 0; row < m; row++) {
+        for (int col = 0; col < m; col++) {
+            if (Qt_Q_sub_Im[row * m + col] > max_error) {
+                max_error = Qt_Q_sub_Im[row * m + col];
+            }
+        }
+    }
+    if (max_error <= error_limit * m){
             pass = true;
     }
-    printf("||QT @ Q - Im|| = %e Error Criteria: %s\n", error, pass ? "True" : "False");
+    printf("||QT @ Q - Im|| = %E Error Criteria: %s\n", max_error, pass ? "True" : "False: should be less than ");
+
+    if (!pass) {
+        printf("%.2E\n", error_limit * m);
+    }
 
     free(Qt_Q);
     free(Im);
     free(Qt_Q_sub_Im);
 
-    return error;
+    return max_error;
 }
 
 float h_error_3(float* R, int m, int n) {
