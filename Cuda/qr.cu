@@ -284,6 +284,8 @@ void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width
     *   University Press. Pg. 249. Algorithm 5.2.1
     */
 
+    nvtxRangePush(__func__);
+
     // Iterate over columns
     int r = (panel_width + global_offset) > n ? n: panel_width + global_offset;
     for (int k = global_offset; k < r; k++) {
@@ -363,6 +365,8 @@ void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width
         free(temp2);
         free(u);
     }
+
+    nvtxRangePop();
 }
 
 
@@ -412,6 +416,7 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
 
 void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, int panel_width)
 {
+    nvtxRangePush(__func__);
     float* W = (float*)malloc((m - global_offset) * panel_width * sizeof(float));
     float* Y = (float*)malloc((m - global_offset) * panel_width * sizeof(float));
     float* z = (float*)malloc((m - global_offset) * sizeof(float));
@@ -499,6 +504,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     free(z);
     //free(W_Yt);
     *h_Q = W_Yt;
+    nvtxRangePop();
 }
 
 __global__ void global_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a_width, int a_height, int b_width)
@@ -1325,20 +1331,13 @@ void test_dev_block_qr_tensorcore_gmem() {
 void test_dev_householder_qr() {
     printf("\nTesting GPU householder QR...\n");
 
-    int rows, cols;
-    double* mtx;
+    int m = 600;
+    int n = 400;
+    int r = 10;
 
-    //read_euroc_jacobian("C:\\Users\\jaido\\source\\MixedPrecisionBlockQR\\Cuda\\jacobians\\A_000000100.txt", &rows, &cols, &mtx);
+    printf("Dimensions of A: %dx%d\n", m, n);
 
-    int m = 3;
-    int n = 3;
-
-    // Initialize test matrix A input on Host
-    float h_A_in[3][3] = {
-        {12, -51, 4},
-        {6, 167, -68},
-        {-4, 24, -41},
-    };
+    float* h_A_in = h_generate_random_matrix(m, n);
 
     float* h_A_out = (float*)malloc((m+1) * n * sizeof(float)); // extra row gives room for storing householder vectors in lower triangular portion of A
     float* h_Q_out = (float*)malloc(m * m * sizeof(float));
@@ -1358,31 +1357,26 @@ void test_dev_householder_qr() {
     dim3 DimGrid(1, 1, 1);
     dim3 DimBlock(1, 1, 1);
     // Time execution of the following kernel call
+    clock_t cycles = clock(); // Time how long the QR function takes to execute
     dev_householder_qr <<<DimGrid, DimBlock >> > (dev_A, m, n, 0);
-
     cudaDeviceSynchronize();
+    cycles = clock() - cycles;
+    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    float flops = h_qr_flops_per_second(time_ms, m, n);
 
     cudaMemcpy(h_A_out, dev_A, (m+1) * n * sizeof(float), cudaMemcpyDeviceToHost);
     //cudaMemcpy(h_Q_out, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
 
-    h_wy_transform(h_A_out, &h_Q_out, m, n, 0, n);
+    h_q_backward_accumulation(h_A_out, &h_Q_out, m, n);
+    //h_wy_transform(h_A_out, &h_Q_out, m, n, 0, n);
 
     h_strip_R_from_A((float*)h_A_out, h_R, m, n);
 
     float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
     float error3 = h_error_3(h_R, m, n);
     float error2 = h_error_2(h_Q_out, m);
-    //printf("||A - QR||/||A|| = %e\n", backward_error);
-    //printf("||QT @ Q - Im|| = %e\n", h_error_2(h_Q_out, m));
-    //printf("||L|| = %e\n", error3);
-    printf("GPU householder QR finished...\n");
 
-
-    // Write results to log file
-    //h_write_results_to_log()
-
-    //h_wy_transform(h_A_out, m, n, 0, n);
-
+    printf("GPU householder QR finished in %.2f ms...\n", time_ms);
 }
 
 void h_block_qr(float* A, float* Q, int m, int n, int r) {
@@ -1586,19 +1580,13 @@ void test_h_block_qr() {
 
     printf("\nTesting sequential block QR...\n");
 
-    // use read_euroc_jacobian to load test matrices
-    float A_in[6][4] = {
-        {10,20,30,40},
-        {32,32,44,55},
-        {23,66,74,64},
-        {67,28,46,26},
-        {95,95,52,88},
-        {75,53,96,47},
-    };
+    int m = 600;
+    int n = 400;
+    int r = 10;
 
-    int m = 6;
-    int n = 4;
-    int r = 2;
+    printf("Dimensions of A: %dx%d\n", m, n);
+
+    float* A_in = h_generate_random_matrix(m, n);
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
@@ -1608,9 +1596,10 @@ void test_h_block_qr() {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    float time_ms = 0; // Time how long the QR function takes to execute
-
+    clock_t cycles = clock(); // Time how long the QR function takes to execute
     h_block_qr((float*)A_out, Q, m, n, r);
+    cycles = clock() - cycles;
+    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
 
     float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
 
@@ -1623,7 +1612,7 @@ void test_h_block_qr() {
     // write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
 
-    printf("Sequential block QR finished...\n");
+    printf("Sequential block QR finished in %.2f ms...\n", time_ms);
     //printf("||A - QR||/||A|| = %e\n", backward_error);
     free(Q);
     free(R);
@@ -1639,7 +1628,7 @@ void test_dev_block_qr() {
 
     int m = 600;
     int n = 400;
-    int r = 10;
+    int r = 16;
 
     printf("Dimensions of A: %dx%d\n", m, n);
 
