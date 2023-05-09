@@ -462,12 +462,6 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
             W[idx * panel_width + i] = z[idx];
         }
     }
-    
-    cycles = clock() - cycles;
-    float time_ms_wy = cycles * 1000 / CLOCKS_PER_SEC;
-    printf("WY built in %.2e ms\n", time_ms_wy);
-
-    cycles = clock();
 
     // Im - WY^T (classic "triply-nested-loop")
     // Flops: (m-global_offset)x(m-global_offset)xpanel_width
@@ -488,10 +482,6 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
             }
         }
     }
-
-    cycles = clock() - cycles;
-    time_ms_wy = cycles * 1000 / CLOCKS_PER_SEC;
-    printf("Q built from wy in %.2e ms\n", time_ms_wy);
 
     free(W);
     free(Y);
@@ -1636,20 +1626,6 @@ void test_dev_block_qr() {
 
     printf("\nTesting GPU block QR...\n");
 
-    // use read_euroc_jacobian to load test matrices
-    //float A_in[6][4] = {
-    //    {10,20,30,40},
-    //    {32,32,44,55},
-    //    {23,66,74,64},
-    //    {67,28,46,26},
-    //    {95,95,52,88},
-    //    {75,53,96,47},
-    //};
-
-    //int m = 6;
-    //int n = 4;
-    //int r = 2;
-
     int m = 600;
     int n = 400;
     int r = 10;
@@ -1704,5 +1680,5 @@ int main() {
     test_tensorcore_mmult_gmem();
     test_tensorcore_mmult_tiled();
     test_template_tensorcore_mmult_tiled();
-    test_dev_block_qr_tensorcore_gmem();
+    //test_dev_block_qr_tensorcore_gmem();
 }
