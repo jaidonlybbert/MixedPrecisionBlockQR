@@ -199,8 +199,10 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
     h_mmult((float*)Q, R, QR, m, n, m);
     h_matrix_subtract((float*)A, QR, A_sub_QR, m, n);
 
-    float backward_error = (h_matrix_norm(A_sub_QR, m, n) / h_matrix_norm((float*)A, m, n));
-    if (backward_error <= error_limit * m * h_matrix_norm((float*)A, m, n)){
+    float a_norm = h_matrix_norm((float*)A, m, n);
+
+    float backward_error = (h_matrix_norm(A_sub_QR, m, n) / a_norm);
+    if (backward_error <= error_limit * m * a_norm){
             pass = true;
     }
     printf("||A - QR||/||A|| = %e Error Criteria: %s\n", backward_error, pass ? "True" : "False");
@@ -352,6 +354,51 @@ void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width
     }
 }
 
+
+void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
+    /*
+    * "Backward accumulation" of Q from householder vectors stored in lower trapezoidal region
+    *   of A, after householder QR
+    * 
+    * Reference:
+    *   Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins
+    *   University Press. Pg. 238. Algorithm 5.1.5
+    */
+
+    // Initialize Q as identity
+    *h_Q = (float*)malloc(m * m * sizeof(float));
+    h_identity_mtx(*h_Q, m, m);
+
+    // Declare temporary vectors
+    float* v;
+    float beta;
+
+    for (int j = n - 1; j >= 0; j--) { // iterate over householder vectors stored in lower part of A
+        int v_length = m - j; // v is the householder vector, smallest first
+        v = (float*)malloc((m - j) * sizeof(float));
+
+        // Q = (Im - 2v(v^T))Q
+        // Q = Q_j:m,j:m - 2V @ ((V^T) @ Q_j:m,j:m)
+
+        // (V^T) @ Q_j:m,j:m
+        float* temp = (float*)malloc((m - j) * sizeof(float));
+        for (int col = j; col < m; col++) {
+            float inner_product = 0;
+            for (int row = j; row < m; row++) {
+                inner_product += h_A[(row + 1) * n + j] * (*h_Q)[row * m + col];
+            }
+            temp[col - j] = inner_product;
+        }
+
+        // Q_j:m,j:m = Q_j:m,j:m - 2 * V @ ((V^T) @ Q_j:m,j:m)
+        for (int row = j; row < m; row++) {
+            for (int col = j; col < m; col++) {
+                (*h_Q)[row * m + col] = (*h_Q)[row * m + col] - 2.0 * h_A[(row + 1) * n + j] * temp[col - j];
+            }
+        }
+    }
+}
+
 void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, int panel_width)
 {
     float* W = (float*)malloc((m - global_offset) * panel_width * sizeof(float));
@@ -369,10 +416,6 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     }
 
     clock_t cycles = clock();
-
-    // FLOPs: (panel_width)x
-    //        Sum_i((m-global_offset)x(m-global_offset)x(i) + (m-global_offset)x(m-global_offset-i) + (m-global_offset)) +
-    //        (m-global_offset)x(m-global_offset)xpanel_width
 
     // Iterate over columns of panel and update W, Y
     for (int i = 1; i < panel_width; i++) { // cols of panel
@@ -1458,7 +1501,6 @@ void test_h_householder_qr() {
 
     int m = 600;
     int n = 400;
-    int r = 10;
 
     printf("Dimensions of A: %dx%d\n", m, n);
 
@@ -1471,19 +1513,16 @@ void test_h_householder_qr() {
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
+    
 
     //h_block_qr((float*)A, Q, m, n, r);
     clock_t cycles = clock();
-    h_householder_qr((float*)A_out, m, n, global_offset, n);
+    h_householder_qr(A_out, m, n, 0, n);
     cycles = clock() - cycles;
+    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    float flops = h_qr_flops_per_second(time_ms, m, n);
 
-    float time_ms_r = cycles * 1000 / CLOCKS_PER_SEC;
-    float flops = h_qr_flops_per_second(time_ms_r, m, n);
-
-    cycles = clock();
-    h_wy_transform(A_out, &Q, m, n, global_offset, n);
-    cycles = clock() - cycles;
-    float time_ms_q = cycles * 1000 / CLOCKS_PER_SEC;
+    h_q_backward_accumulation(A_out, &Q, m, n);
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
@@ -1494,8 +1533,7 @@ void test_h_householder_qr() {
     //printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
     //printf("||L|| = %e\n", error3);
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
-    printf("Sequential householder R finished in %.2f ms\n", time_ms_r);
-    printf("Sequential wy-transformation finished in %.2f ms\n", time_ms_q);
+    printf("Sequential householder finished in %.2f ms\n", time_ms);
 
     h_write_results_to_log(m, n, 0, 0, backward_error);
 
@@ -1504,9 +1542,6 @@ void test_h_householder_qr() {
     free(Q);
     free(R);
     free(A_out);
-
-
-
 }
 
 
