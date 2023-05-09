@@ -202,7 +202,7 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
     float a_norm = h_matrix_norm((float*)A, m, n);
 
     float backward_error = (h_matrix_norm(A_sub_QR, m, n) / a_norm);
-    if (backward_error <= error_limit * m * a_norm){
+    if (backward_error <= error_limit * m){
             pass = true;
     }
     printf("||A - QR||/||A|| = %e Error Criteria: %s\n", backward_error, pass ? "True" : "False");
@@ -215,7 +215,7 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
 float h_error_2(float* Q, int m) {
 
     // ||Q^T @ Q - Im||
-    const double error_limit = pow<double>(2, -22);//1.1920928955078125e-07;
+    const double error_limit = pow<double>(2, -23);//1.1920928955078125e-07;
     bool pass = false;
     float* Qt_Q = (float*)malloc(m * m * sizeof(float));
     float* Im = (float*)malloc(m * m * sizeof(float));
@@ -440,7 +440,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         // Flops: (m-global_offset)x(m-global_offset)x(i)
         for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
             int row_offset = row * panel_width;
-            for (int col = i; col < W_Yt_dim; col++) { // cols of W_Yt
+            for (int col = 0; col < W_Yt_dim; col++) { // cols of W_Yt
                 int col_offset = col * panel_width;
                 // compute each inner product
                 float inner_product = 0;
@@ -483,11 +483,9 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     // Flops: (m-global_offset)x(m-global_offset)xpanel_width
     for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
         for (int col = 0; col < W_Yt_dim; col++) { // cols of W_Yt
-            // determine inner dimension length
-            int inner_dim = (col + 1 < panel_width) ? col + 1 : panel_width;
             // compute each inner product
             float inner_product = 0;
-            for (int idx = 0; idx < inner_dim; idx++) { // cols of W
+            for (int idx = 0; idx < panel_width; idx++) { // cols of W
                 inner_product += W[row * panel_width + idx] * Y[col * panel_width + idx];
             }
             if (row == col) { // Im is 1
@@ -1393,10 +1391,10 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
 
         // Q is stored in factored form in lower triangular portion of dev_A
         // R is stored in upper triangular portion of dev_A
-        h_householder_qr(A, m, n, lambda, r);
+        h_householder_qr(A, m, n, lambda, tau-lambda);
 
         // Get panel Q from factors
-        h_wy_transform(A, &panel_Q, m, n, lambda, r); // dim panel_Q: (m-lambda)x(m-lambda)
+        h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // dim panel_Q: (m-lambda)x(m-lambda)
 
         // Update matrix A = Q^T @ A
         float* A_old = (float*)malloc(m * n * sizeof(float));
@@ -1571,20 +1569,13 @@ void test_h_wy_transform() {
 }
 
 
-
-
-void test_h_block_qr() {
+void test_h_block_qr(int m, int n, int r) {
     /*
     * Test host version of block QR
     */
 
     printf("\nTesting sequential block QR...\n");
-
-    int m = 600;
-    int n = 400;
-    int r = 10;
-
-    printf("Dimensions of A: %dx%d\n", m, n);
+    printf("Dimensions of A (m, n, r): (%d,%d,%d)\n", m, n, r);
 
     float* A_in = h_generate_random_matrix(m, n);
 
@@ -1619,6 +1610,36 @@ void test_h_block_qr() {
     free(A_out);
 }
 
+struct QRProblemSize {
+    // A = QR problem set dimensions
+    int m; // height of matrix A
+    int n; // width of matrix A
+    int r; // block QR panel width
+};
+
+# define NUM_STATIC_TESTS 11
+
+void test_h_block_qr() {
+
+    QRProblemSize testDim[NUM_STATIC_TESTS] = {
+        {6, 4, 2},
+        {6, 4, 1},
+        {6, 4, 3},
+        {12, 8, 4},
+        {12, 8, 5},
+        {12, 8, 6},
+        {12, 8, 2},
+        {12, 8, 8},
+        {12, 8, 3},
+        {24, 16, 8},
+        {24, 16, 12}
+    };
+
+    for (int i = 0; i < NUM_STATIC_TESTS; i++) {
+        test_h_block_qr(testDim[i].m, testDim[i].n, testDim[i].r);
+    }
+}
+
 void test_dev_block_qr() {
     /*
     * Test GPU version of block QR
@@ -1628,7 +1649,7 @@ void test_dev_block_qr() {
 
     int m = 600;
     int n = 400;
-    int r = 16;
+    int r = 100;
 
     printf("Dimensions of A: %dx%d\n", m, n);
 
@@ -1671,14 +1692,14 @@ void test_dev_block_qr() {
 
 int main() {
 //	std::out<< "testing" << endl;
-    test_dev_householder_qr();
-    test_h_mmult();
-    test_h_mmult_transpose_A();
-    test_h_householder_qr();
+    //test_dev_householder_qr();
+    //test_h_mmult();
+    //test_h_mmult_transpose_A();
+    //test_h_householder_qr();
     test_h_block_qr();
-    test_dev_block_qr();
-    test_tensorcore_mmult_gmem();
-    test_tensorcore_mmult_tiled();
-    test_template_tensorcore_mmult_tiled();
+    //test_dev_block_qr();
+    //test_tensorcore_mmult_gmem();
+    //test_tensorcore_mmult_tiled();
+    //test_template_tensorcore_mmult_tiled();
     //test_dev_block_qr_tensorcore_gmem();
 }
