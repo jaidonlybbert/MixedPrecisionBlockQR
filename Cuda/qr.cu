@@ -422,7 +422,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
     float* W = (float*)malloc((m - global_offset) * panel_width * sizeof(float));
     float* Y = (float*)malloc((m - global_offset) * panel_width * sizeof(float));
     float* z = (float*)malloc((m - global_offset) * sizeof(float));
-    float* W_Yt = (float*)malloc((m - global_offset) * (m - global_offset) * sizeof(float)); // temporary matrix W * Y^T
+    float* W_Yt = (float*)malloc((m - global_offset) * (m - global_offset) * sizeof(float));
 
     // Dimensions of final result Im - WY^T, square
     int W_Yt_dim = m - global_offset;
@@ -1405,7 +1405,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
             for (int col = tau; col < n; col++) {
                 float inner_product = 0;
                 for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim) * n + col];
+                    inner_product += panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim + lambda) * n + col];
                 }
                 A[row * n + col] = inner_product;
             }
@@ -1419,13 +1419,13 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
             for (int col = lambda; col < m; col++) {
                 float inner_product = 0;
                 for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += panel_Q[(row * (m - lambda)) + (col - lambda) + inner_dim] * 
-                        Q_old[row * m + inner_dim + lambda];
+                    inner_product += Q_old[row * m + inner_dim + lambda] * panel_Q[(inner_dim * (m - lambda)) + (col - lambda)];
                 }
                 Q[row * m + col] = inner_product;
             }
         }
         free(Q_old);
+        free(panel_Q);
 
         // increment panel offset
         lambda = tau;
@@ -1693,7 +1693,7 @@ int main() {
     //test_h_mmult();
     //test_h_mmult_transpose_A();
     //test_h_householder_qr();
-    test_qr(test_h_householder_qr);
+    test_qr(test_h_block_qr);
     //test_dev_block_qr();
     //test_tensorcore_mmult_gmem();
     //test_tensorcore_mmult_tiled();
