@@ -59,6 +59,8 @@ SOFTWARE.
 #define CPY_ARRAY_BLOCK_WIDTH 32
 #define CPY_ARRAY_BLOCK_HEIGHT 32
 
+typedef void QR_FUNC(int, int, int);
+
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
     //write arguments to log file
     std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
@@ -1417,7 +1419,8 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
             for (int col = lambda; col < m; col++) {
                 float inner_product = 0;
                 for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-                    inner_product += Q_old[row * m + inner_dim + lambda] * panel_Q[(inner_dim * (m-lambda)) + (col-lambda)];
+                    inner_product += panel_Q[(row * (m - lambda)) + (col - lambda) + inner_dim] * 
+                        Q_old[row * m + inner_dim + lambda];
                 }
                 Q[row * m + col] = inner_product;
             }
@@ -1475,25 +1478,13 @@ void test_h_mmult_transpose_A() {
     }
 }
 
-void test_h_householder_qr() {
+void test_h_householder_qr(int m, int n, int r) {
     /*
     * Test host version of householder QR
     */
 
     // TASK14 3 alice: iterate over many matrix sizes, & test matrices from Tong
     printf("\nTesting sequential householder QR...\n");
-
-    //float A_in[6][4] = {
-    //    {10,20,30,40},
-    //    {32,32,44,55},
-    //    {23,66,74,64},
-    //    {67,28,46,26},
-    //    {95,95,52,88},
-    //    {75,53,96,47},
-    //};
-
-    int m = 600;
-    int n = 400;
 
     printf("Dimensions of A: %dx%d\n", m, n);
 
@@ -1535,6 +1526,10 @@ void test_h_householder_qr() {
     free(Q);
     free(R);
     free(A_out);
+}
+
+void test_h_householder_qr() {
+
 }
 
 
@@ -1619,7 +1614,7 @@ struct QRProblemSize {
 
 # define NUM_STATIC_TESTS 11
 
-void test_h_block_qr() {
+void test_qr(QR_FUNC f) {
 
     QRProblemSize testDim[NUM_STATIC_TESTS] = {
         {6, 4, 2},
@@ -1636,7 +1631,7 @@ void test_h_block_qr() {
     };
 
     for (int i = 0; i < NUM_STATIC_TESTS; i++) {
-        test_h_block_qr(testDim[i].m, testDim[i].n, testDim[i].r);
+        f(testDim[i].m, testDim[i].n, testDim[i].r);
     }
 }
 
@@ -1690,13 +1685,15 @@ void test_dev_block_qr() {
     free(A_out);
 }
 
+
+
 int main() {
 //	std::out<< "testing" << endl;
     //test_dev_householder_qr();
     //test_h_mmult();
     //test_h_mmult_transpose_A();
     //test_h_householder_qr();
-    test_h_block_qr();
+    test_qr(test_h_householder_qr);
     //test_dev_block_qr();
     //test_tensorcore_mmult_gmem();
     //test_tensorcore_mmult_tiled();
