@@ -442,7 +442,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         // Flops: (m-global_offset)x(m-global_offset)x(i)
         for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
             int row_offset = row * panel_width;
-            for (int col = 0; col < W_Yt_dim; col++) { // cols of W_Yt
+            for (int col = i; col < W_Yt_dim; col++) { // cols of W_Yt
                 int col_offset = col * panel_width;
                 // compute each inner product
                 float inner_product = 0;
@@ -1612,7 +1612,7 @@ struct QRProblemSize {
     int r; // block QR panel width
 };
 
-# define NUM_STATIC_TESTS 11
+# define NUM_STATIC_TESTS 14
 
 void test_qr(QR_FUNC f) {
 
@@ -1627,7 +1627,10 @@ void test_qr(QR_FUNC f) {
         {12, 8, 8},
         {12, 8, 3},
         {24, 16, 8},
-        {24, 16, 12}
+        {24, 16, 12},
+        {60, 40, 8},
+        {240, 160, 16},
+        {600, 400, 16}
     };
 
     for (int i = 0; i < NUM_STATIC_TESTS; i++) {
