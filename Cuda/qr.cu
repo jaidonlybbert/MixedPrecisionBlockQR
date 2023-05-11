@@ -1596,18 +1596,21 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
 
         // Updates trailing matrix in place : A = Qt @ A
-        shared_mem_mmult_in_place<<<GridDim, BlockDim>>>(dev_A_panel_result, dev_panel_Q, dev_A, 
+        shared_mem_mmult_in_place_transpose_a<<<GridDim, BlockDim>>>(dev_A_panel_result, dev_panel_Q, dev_A, 
                                                         (m - lambda), (n - tau), (m - lambda), m, n);
-        
-
-        dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim2(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
-        dev_apply_qpanel_to_q << <GridDim2, BlockDim2 >> >(dev_Q, dev_panel_Q, m, lambda);
 
         cudaDeviceSynchronize();
 
-        // Update dev_A with updated matrix
-        dev_cpy_panel_result_a << <GridDim, BlockDim >> > (dev_A, dev_A_panel_result, m, n, tau, lambda);
+        dim3 gridDim2((int)ceil((float)m / TILE_WIDTH), (int)ceil((float)n / TILE_WIDTH), 1);
+        dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
+        dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n, 
+                                                                  (m - lambda), (n - tau), BOTTOM_RIGHT);
+
+        cudaDeviceSynchronize();
+
+        dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
+        dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> >(dev_Q, dev_panel_Q, m, lambda);
 
         cudaDeviceSynchronize();
 
@@ -2008,26 +2011,31 @@ void test_dev_block_qr(int m, int n, int r) {
 
     float* A_in = h_generate_random_matrix(m, n);
 
-    float* Q = (float*)malloc(m * m * sizeof(float));
+    float* Q1 = (float*)malloc(m * m * sizeof(float));
+    float* Q2 = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
+    float* A_out2 = (float*)malloc((m + 1) * n * sizeof(float));
 
-    h_identity_mtx(Q, m, m);
+    h_identity_mtx(Q1, m, m);
+    h_identity_mtx(Q2, m, m);
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
+    h_matrix_cpy((float*)A_in, A_out2, m, n);
 
     clock_t cycles = clock(); // Time how long the QR function takes to execute
-    dev_block_qr((float*)A_out, Q, m, n, r);
+    h_block_qr((float*)A_out, Q1, m, n, r);
+    dev_block_qr((float*)A_out2, Q2, m, n, r);
     cycles = clock() - cycles;
 
     float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
 
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
-    h_strip_R_from_A((float*)A_out, R, m, n);
+    h_strip_R_from_A((float*)A_out2, R, m, n);
 
-    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-    float error2 = h_error_2(Q, m);
+    float backward_error = h_backward_error((float*)A_in, R, Q2, m, n);
+    float error2 = h_error_2(Q2, m);
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
@@ -2038,7 +2046,8 @@ void test_dev_block_qr(int m, int n, int r) {
     printf("GPU Block QR finished in %.2f ms...\n", time_ms);
    // printf("||A - QR||/||A|| = %e\n", backward_error);
     
-    free(Q);
+    free(Q1);
+    free(Q2);
     free(R);
     free(A_out);
 }
@@ -2051,12 +2060,13 @@ int main() {
 
     //test_qr(test_h_householder_qr);
     //test_qr(test_dev_householder_qr);
-    //test_qr(test_h_block_qr);
+    test_qr(test_h_block_qr);
     //test_qr(test_dev_block_qr);
 
-    test_mmult(test_dev_smem_mmult);
-    test_mmult_in_place();
-    test_mmult_in_place_transpose_a();
+    //test_mmult(test_dev_smem_mmult);
+    //test_mmult_in_place();
+    //test_mmult_in_place_transpose_a();
+    test_qr(test_dev_block_qr);
     //test_mmult(test_dev_smem_mmult_in_place);
 
     //test_dev_smem_mmult(6000, 4000, 6000);
