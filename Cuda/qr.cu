@@ -721,6 +721,60 @@ void shared_mem_mmult_in_place(float* c_mtx, float* a_mtx, float* b_mtx, int m, 
 }
 
 __global__
+void shared_mem_mmult_in_place_transpose_a(float* c_mtx, float* a_mtx, float* b_mtx, int m, int n, int k, int b_height, int b_width)
+/*
+* Computes result c matrix from the matrix multiplication C = AB using shared memory with CUDA
+* 
+* assumed m = k
+*
+* Dimensions:
+* A : m x k
+* B : b_height x b_width => operate on bottom-right corner k x n submatrix
+* C : m x n
+*/
+{
+    // row and column of C result
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // offsets for 'in-place' read from b matrix
+    int b_row_offset = b_height - k;
+    int b_col_offset = b_width - n;
+
+    __shared__ float ads[TILE_WIDTH][TILE_WIDTH];
+    __shared__ float bds[TILE_WIDTH][TILE_WIDTH];
+
+    int ty = threadIdx.y, tx = threadIdx.x;
+
+    int phases = ceil(k / (float)TILE_WIDTH);
+
+    float pval = 0.0;
+    for (int i = 0; i < phases; i++) {
+        if ((i * TILE_WIDTH + tx < m) && (row < k)) {
+            ads[tx][ty] = a_mtx[(i * TILE_WIDTH + tx) * k + row];
+        }
+
+        if ((i * TILE_WIDTH + ty < k) && (col < n)) {
+            bds[ty][tx] = b_mtx[(i * TILE_WIDTH + ty + b_row_offset) * b_width + (col + b_col_offset)];
+        }
+
+        __syncthreads();
+
+        for (int idx = 0; idx < TILE_WIDTH; idx++) {
+            if ((i * TILE_WIDTH + idx) < m)
+                pval += ads[idx][ty] * bds[idx][tx];
+        }
+        __syncthreads();
+    }
+
+    if (col < n && row < m) {
+        c_mtx[row * n + col] = pval;
+    }
+
+    __syncthreads();
+}
+
+__global__
 void dev_tensorcore_mmult_1_warp(float* c_mtx, half* a_mtx, half* b_mtx) {
     unsigned int bx = blockIdx.x;
     unsigned int by = blockIdx.y;
@@ -986,7 +1040,80 @@ void test_dev_smem_mmult_in_place(int m, int n, int k, int b_width, int b_height
     printf("Test passed.\n");
 }
 
+void test_dev_smem_mmult_in_place_transpose_a(int m, int n, int k, int b_width, int b_height) {
+    /*
+    * Computes C = A^T @ B', where b' (mxk) is stored in the "bottom-right" submatrix of a larger matrix B
+    * (b_height x b_width), and A is transposed in memory
+    */
+    printf("\nTesting GPU SMEM tiled mmult (in-place & transposed A) %dx%dx%d...\n", m, n, k);
 
+    float* a_mtx = (float*)malloc(m * k * sizeof(float));
+    float* b_mtx = (float*)malloc(b_height * b_width * sizeof(float));
+    float* c_mtx = (float*)malloc(m * n * sizeof(float));
+
+    // initialize matrix A
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < k; j++) {
+            a_mtx[i * k + j] = (float)(float)i;
+        }
+    }
+
+    memset(b_mtx, 0.0, b_width * b_height * sizeof(float));
+
+    // initialize matrix B
+    for (int i = 0; i < k; i++) {
+        for (int j = 0; j < n; j++) {
+            b_mtx[(i + (b_height - k)) * b_width + (j + (b_width - n))] = (float)(float)j;
+        }
+    }
+
+    // initialize matrix C
+    memset(c_mtx, 0.0, m * n * sizeof(float));
+
+    // Allocate device memory
+    float* dev_a;
+    float* dev_b;
+    float* dev_c;
+
+    cudaMalloc(&dev_a, m * k * sizeof(float));
+    cudaMalloc(&dev_b, b_height * b_width * sizeof(float));
+    cudaMalloc(&dev_c, m * n * sizeof(float));
+
+    // Copy matrices from host to device
+    cudaMemcpy(dev_a, a_mtx, m * k * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_b, b_mtx, b_height * b_width * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_c, c_mtx, m * n * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Configure grid
+    dim3 gridDim((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
+    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1); // one warp
+
+    shared_mem_mmult_in_place_transpose_a << <gridDim, blockDim >> > (dev_c, dev_a, dev_b, m, n, k, b_height, b_width);
+
+    cudaDeviceSynchronize();
+
+    dim3 gridDim2((int)ceil((float)b_width / TILE_WIDTH), (int)ceil((float)b_height / TILE_WIDTH), 1);
+    dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
+    dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_b, dev_c, b_height, b_width, m, n, BOTTOM_RIGHT);
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(b_mtx, dev_b, b_height * b_width * sizeof(float), cudaMemcpyDeviceToHost);
+
+    float row_sum = 0;
+    for (int i = 0; i < k; i++) {
+        row_sum += i;
+    }
+
+    // test result
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            assert(abs(b_mtx[(i + (b_height - k)) * b_width + j + (b_width - n)] - (j * row_sum)) <= 1E-7 * row_sum * j * m);
+        }
+    }
+
+    printf("Test passed.\n");
+}
 
 template <typename T_A, typename T_B, typename T_C>
 void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int m, int n, int k) {
@@ -1855,6 +1982,22 @@ void test_mmult_in_place() {
     }
 }
 
+void test_mmult_in_place_transpose_a() {
+    MMULTProblemSize testDim[7] = {
+    {6, 4, 6},
+    {12, 8, 12},
+    {24, 16, 24},
+    {60, 40, 60},
+    {240, 160, 240},
+    {400, 300, 400},
+    {300, 300, 300}
+    };
+
+    for (int i = 0; i < 7; i++) {
+        test_dev_smem_mmult_in_place_transpose_a(testDim[i].m, testDim[i].n, testDim[i].k, 400, 400);
+    }
+}
+
 void test_dev_block_qr(int m, int n, int r) {
     /*
     * Test GPU version of block QR
@@ -1913,6 +2056,7 @@ int main() {
 
     test_mmult(test_dev_smem_mmult);
     test_mmult_in_place();
+    test_mmult_in_place_transpose_a();
     //test_mmult(test_dev_smem_mmult_in_place);
 
     //test_dev_smem_mmult(6000, 4000, 6000);
