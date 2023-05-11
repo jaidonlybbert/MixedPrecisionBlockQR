@@ -557,7 +557,7 @@ void dev_cpy_strided_array(T* dest, T* src, int dest_height, int dest_width, int
         int row_offset = (larger_height - smaller_height);
         int col_offset = (larger_width - smaller_width);
 
-        if (row >= row_offset && col >= col_offset) {
+        if (row >= row_offset && col >= col_offset && row < dest_height && col < dest_width) {
             dest[row * dest_width + col] = src[(row - row_offset) * src_width + col - col_offset];
         }
     }
@@ -679,7 +679,6 @@ void shared_mem_mmult_in_place(float* c_mtx, float* a_mtx, float* b_mtx, int m, 
 * C : m x n
 */
 {
-    int this_fucking_k = k;
     // row and column of C result
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -696,15 +695,13 @@ void shared_mem_mmult_in_place(float* c_mtx, float* a_mtx, float* b_mtx, int m, 
     int phases = ceil(k / (float)TILE_WIDTH);
 
     float pval = 0.0;
-    float god_damn_fucking_number = 0.0;
     for (int i = 0; i < phases; i++) {
         if ((i * TILE_WIDTH + tx < k) && (row < m)) {
             ads[ty][tx] = a_mtx[row * k + i * TILE_WIDTH + tx];
         }
 
-        if ((i * TILE_WIDTH + ty < this_fucking_k) && (col < n)) {
-            god_damn_fucking_number = b_mtx[(i * TILE_WIDTH + ty + b_row_offset) * b_width + (col + b_col_offset)];
-            bds[ty][tx] = god_damn_fucking_number;
+        if ((i * TILE_WIDTH + ty < k) && (col < n)) {
+            bds[ty][tx] = b_mtx[(i * TILE_WIDTH + ty + b_row_offset) * b_width + (col + b_col_offset)];
         }
 
         __syncthreads();
@@ -1462,6 +1459,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         cudaMalloc(&dev_A, m * n * sizeof(float));
         cudaMalloc(&dev_Q, m * m * sizeof(float));
         cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
+        cudaMalloc(&dev_A_panel_result, (m - lambda) * (n - tau) * sizeof(float));
 
         cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
@@ -1470,8 +1468,10 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
 
-        // Update global Q
-        dev_apply_qt_to_a<<<GridDim, BlockDim>>>(dev_A, dev_panel_Q, dev_A_panel_result, m, n, tau, lambda);
+        // Updates trailing matrix in place : A = Qt @ A
+        shared_mem_mmult_in_place<<<GridDim, BlockDim>>>(dev_A_panel_result, dev_panel_Q, dev_A, 
+                                                        (m - lambda), (n - tau), (m - lambda), m, n);
+        
 
         dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim2(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
