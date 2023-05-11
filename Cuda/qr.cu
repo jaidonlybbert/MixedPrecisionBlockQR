@@ -50,6 +50,10 @@ SOFTWARE.
 #define TC_TILE_K 16
 #define WARP_SIZE 32
 
+// Shared memory tile sizes for tiled global memory mmult
+#define GMEM_MMULT_TILE_WIDTH 16
+#define GMEM_MMULT_TILE_HEIGHT 16
+
 // Thread block sizes for TC MMULT
 // Shrink to get more shared memory per warp, expand to increase memory re-use
 #define TC_MMULT_THREAD_BLOCK_WIDTH 4 * WARP_SIZE
@@ -531,7 +535,7 @@ __global__ void global_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a
     }
 }
 
-#define TILE_WIDTH 3
+#define TILE_WIDTH 32
 
 __global__ void shared_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a_width, int a_height, int b_width)
 /*
@@ -702,6 +706,70 @@ void test_tensorcore_mmult_gmem() {
 
     printf("Test passed.\n");
 
+}
+
+
+void test_dev_smem_mmult(int m, int n, int k) {
+    printf("\nTesting GPU SMEM tiled mmult %dx%dx%d...\n", m, n, k);
+
+    float* a_mtx = (float*)malloc(m * k * sizeof(float));
+    float* b_mtx = (float*)malloc(k * n * sizeof(float));
+    float* c_mtx = (float*)malloc(m * n * sizeof(float));
+
+    // initialize matrix A
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < k; j++) {
+            a_mtx[i * k + j] = (float)(float)j;
+        }
+    }
+
+    // initialize matrix B
+    for (int i = 0; i < k; i++) {
+        for (int j = 0; j < n; j++) {
+            a_mtx[i * k + j] = (float)(float)j;
+        }
+    }
+
+    // initialize matrix C
+    memset(c_mtx, 0.0, m * n * sizeof(float));
+
+    // Allocate device memory
+    float* dev_a;
+    float* dev_b;
+    float* dev_c;
+
+    cudaMalloc(&dev_a, m * k * sizeof(float));
+    cudaMalloc(&dev_b, k * n * sizeof(float));
+    cudaMalloc(&dev_c, m * n * sizeof(float));
+
+    // Copy matrices from host to device
+    cudaMemcpy(dev_a, a_mtx, m * k * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_b, b_mtx, k * n * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_c, c_mtx, m * n * sizeof(float), cudaMemcpyHostToDevice);
+
+    // Configure grid
+    dim3 gridDim((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
+    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1); // one warp
+
+    shared_mem_mmult << <gridDim, blockDim >> > (dev_c, dev_b, dev_a, k, m, n);
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(c_mtx, dev_c, m * n * sizeof(float), cudaMemcpyDeviceToHost);
+
+    float row_sum = 0;
+    for (int i = 0; i < k; i++) {
+        row_sum += i;
+    }
+
+    // test result
+    for (int i = 0; i < m; i++) {
+        for (int j = 0; j < n; j++) {
+            assert(c_mtx[i * n + j] == j * row_sum);
+        }
+    }
+
+    printf("Test passed.\n");
 }
 
 template <typename T>
@@ -1118,8 +1186,10 @@ void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** m
 }
 
 
+
+
 __global__
-void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, int m, int n, int tau, int lambda) {
+void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, float* res_A, int m, int n, int tau, int lambda) {
     // Collaboratively load householder vectors vk from global memory to shared memory
     // Construct W, K from householder vectors
     // Construct Q
@@ -1127,16 +1197,57 @@ void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, int m, int n, int tau, 
     // Perform tiled GMMULT TensorCore warp-level mixed precision fused multiply add operations to update Q and A
     // Update matrix Q, A in global memory
 
+    __shared__ float a_smem_tile[GMEM_MMULT_TILE_WIDTH][GMEM_MMULT_TILE_WIDTH];
+    __shared__ float panel_q_smem_tile[GMEM_MMULT_TILE_WIDTH][GMEM_MMULT_TILE_WIDTH];
+
+    // Row and column of the output result (A)
     int row = blockIdx.y * blockDim.y + threadIdx.y + lambda;
     int col = blockIdx.x * blockDim.x + threadIdx.x + tau;
 
-    if (row < m && row >= lambda && col < n && col >= tau) {
-        float inner_product = 0;
-        for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
-            inner_product += dev_panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * dev_A[(inner_dim)*n + col];
+    int panel_q_dim = (m - lambda); // panel_q is square matrix, shrinks for subsequent panels
+
+    // Number of phases determined from block width
+    int phases = panel_q_dim % GMEM_MMULT_TILE_WIDTH == 0 ? 
+        panel_q_dim / GMEM_MMULT_TILE_WIDTH : panel_q_dim / GMEM_MMULT_TILE_WIDTH + 1;
+    
+    // Traverse phases and perform matrix-multiply accumulate into inner_product for each thread
+
+    // check thread maps to output matrix
+    bool valid_row = (row >= lambda && row < m); 
+    bool valid_col = (col >= tau && col < n);
+
+    // panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim + lambda) * n + col];
+
+    float inner_product = 0;
+    for (int p = 0; p < phases; p++) {
+        // Check index doesn't exceed input bounds
+        int a_idx_x = col;
+        int a_idx_y = p * GMEM_MMULT_TILE_HEIGHT + row;
+        int q_idx_x = (row - lambda);
+        int q_idx_y = p * GMEM_MMULT_TILE_HEIGHT + (row-lambda);
+
+        bool valid_idx_a = (a_idx_y < m);
+        bool valid_idx_q = (q_idx_y < panel_q_dim);
+
+        if (valid_idx_a && valid_idx_q && valid_row && valid_col) {
+            // Collaboratively load data into smem
+            a_smem_tile[threadIdx.y][threadIdx.x] = dev_A[a_idx_y * n + a_idx_x];
+            panel_q_smem_tile[threadIdx.y][threadIdx.x] = dev_panel_Q[q_idx_y * panel_q_dim + q_idx_x];
         }
-        dev_A[row * n + col] = inner_product;
+
+        __syncthreads();
+
+        // Accumulate tile inner product
+        if (valid_idx_a && valid_idx_q && valid_row && valid_col) {
+            for (int i = 0; i < GMEM_MMULT_TILE_WIDTH; i++) {
+                inner_product += panel_q_smem_tile[i][threadIdx.y] * a_smem_tile[i][threadIdx.x];
+            }
+        }
+
+        __syncthreads();
     }
+
+    
 }
 
 __global__ 
@@ -1158,6 +1269,20 @@ void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int lambda) 
     }
 }
 
+__global__
+void dev_cpy_panel_result_a(float* dev_A, float* dev_A_panel_result, int m, int n, int tau, int lambda) {
+    // Row and column of the output result (A)
+    int row = blockIdx.y * blockDim.y + threadIdx.y + lambda;
+    int col = blockIdx.x * blockDim.x + threadIdx.x + tau;
+
+    int panel_a_height = (m - lambda); // panel_q is square matrix, shrinks for subsequent panels
+    int panel_a_width = (n - tau);
+
+    dev_A[row * n + col] = dev_A_panel_result[(row - lambda) * (panel_a_width) + (col - tau)];
+
+    __syncthreads();
+}
+
 
 void dev_block_qr(float* A, float* Q, int m, int n, int r) {
     /*
@@ -1171,10 +1296,10 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
 
         // Q is stored in factored form in lower triangular portion of dev_A
         // R is stored in upper triangular portion of dev_A
-        h_householder_qr(A, m, n, lambda, r);
+        h_householder_qr(A, m, n, lambda, tau-lambda);
 
         // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+        h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
 
         // Update matrix A = Q^T @ A
         float blockWidth = 32.;
@@ -1183,10 +1308,12 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         float* dev_A;
         float* dev_Q;
         float* dev_panel_Q;
+        float* dev_A_panel_result;
 
         cudaMalloc(&dev_A, m * n * sizeof(float));
         cudaMalloc(&dev_Q, m * m * sizeof(float));
         cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
+        cudaMalloc(&dev_A_panel_result, (m - lambda) * n * sizeof(float)); // MMULT updates this
 
         cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
@@ -1196,11 +1323,16 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
 
         // Update global Q
-        dev_apply_qt_to_a<<<GridDim, BlockDim>>>(dev_A, dev_panel_Q, m, n, tau, lambda);
+        dev_apply_qt_to_a<<<GridDim, BlockDim>>>(dev_A, dev_panel_Q, dev_A_panel_result, m, n, tau, lambda);
 
         dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim2(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
         dev_apply_qpanel_to_q << <GridDim2, BlockDim2 >> >(dev_Q, dev_panel_Q, m, lambda);
+
+        cudaDeviceSynchronize();
+
+        // Update dev_A with updated matrix
+        dev_cpy_panel_result_a << <GridDim, BlockDim >> > (dev_A, dev_A_panel_result, m, n, tau, lambda);
 
         cudaDeviceSynchronize();
 
@@ -1211,130 +1343,16 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         cudaFree(dev_panel_Q);
         cudaFree(dev_Q);
 
-        // increment panel offset
-        lambda = tau;
-    }
-}
-
-
-void dev_block_qr_tensorcore_gmem(float* A, float* Q, int m, int n, int r) {
-    /*
-    * GPU block QR implementation using TensorCore mixed-precision matrix multiply-accumulate
-    * 
-    * TensorCore matrix multiply reads from GLOBAL memory, additional speedup possible by using SHARED memory
-    */
-
-    float* panel_Q = NULL;
-    int lambda = 0;
-    while (lambda < n) { // panel starts at lambda
-        int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
-
-        // Q is stored in factored form in lower triangular portion of dev_A
-        // R is stored in upper triangular portion of dev_A
-        h_householder_qr(A, m, n, lambda, r);
-
-        // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        h_wy_transform(A, &panel_Q, m, n, lambda, r); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
-
-        // Update matrix A = Q^T @ A
-        float blockWidth = 32.;
-        float blockHeight = 32.;
-
-        float* dev_A;
-        float* dev_Q;
-        float* dev_panel_Q;
-
-        cudaMalloc(&dev_A, m * n * sizeof(float));
-        cudaMalloc(&dev_Q, m * m * sizeof(float));
-        cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
-
-        cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
-
-        dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
-
-        // Update global Q
-        dev_apply_qt_to_a << <GridDim, BlockDim >> > (dev_A, dev_panel_Q, m, n, tau, lambda);
-
-        dim3 BlockDim2((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim2(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
-        dev_apply_qpanel_to_q << <GridDim2, BlockDim2 >> > (dev_Q, dev_panel_Q, m, lambda);
-
-        cudaDeviceSynchronize();
-
-        cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(Q, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
-
-        cudaFree(dev_A);
-        cudaFree(dev_panel_Q);
-        cudaFree(dev_Q);
+        free(panel_Q);
 
         // increment panel offset
         lambda = tau;
     }
 }
 
-void test_dev_block_qr_tensorcore_gmem() {
-    /*
-    * Test GPU version of block QR
-    */
 
-    printf("\nTesting Mixed-precision GPU block QR...\n");
-
-    // use read_euroc_jacobian to load test matrices
-    __half A_in[6][4] = {
-        {10.,20.,30.,40.},
-        {32.,32.,44.,55.},
-        {23.,66.,74.,64.},
-        {67.,28.,46.,26.},
-        {95.,95.,52.,88.},
-        {75.,53.,96.,47.},
-    };
-
-    int m = 6;
-    int n = 4;
-    int r = 2;
-
-    float* Q = (float*)malloc(m * m * sizeof(float));
-    float* R = (float*)malloc(m * n * sizeof(float));
-    float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
-
-    h_identity_mtx(Q, m, m);
-
-    h_matrix_cpy((float*)A_in, A_out, m, n);
-
-    float time_ms = 0; // Time how long the QR function takes to execute
-
-    dev_block_qr_tensorcore_gmem((float*)A_out, Q, m, n, r);
-
-    float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
-
-    h_strip_R_from_A((float*)A_out, R, m, n);
-
-    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-    float error2 = h_error_2(Q, m);
-    float error3 = h_error_3(R, m, n);
-
-    // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
-
-    printf("Mixed-precision GPU block QR finished...\n");
-   // printf("||A - QR||/||A|| = %e\n", backward_error);
-    
-    free(Q);
-    free(R);
-    free(A_out);
-}
-
-void test_dev_householder_qr() {
+void test_dev_householder_qr(int m, int n, int r) {
     printf("\nTesting GPU householder QR...\n");
-
-    int m = 600;
-    int n = 400;
-    int r = 10;
-
     printf("Dimensions of A: %dx%d\n", m, n);
 
     float* h_A_in = h_generate_random_matrix(m, n);
@@ -1638,18 +1656,13 @@ void test_qr(QR_FUNC f) {
     }
 }
 
-void test_dev_block_qr() {
+void test_dev_block_qr(int m, int n, int r) {
     /*
     * Test GPU version of block QR
     */
 
     printf("\nTesting GPU block QR...\n");
-
-    int m = 600;
-    int n = 400;
-    int r = 100;
-
-    printf("Dimensions of A: %dx%d\n", m, n);
+    printf("Dimensions of A (m, n, r): (%d, %d, %d)\n", m, n, r);
 
     float* A_in = h_generate_random_matrix(m, n);
 
@@ -1691,15 +1704,17 @@ void test_dev_block_qr() {
 
 
 int main() {
-//	std::out<< "testing" << endl;
-    //test_dev_householder_qr();
-    //test_h_mmult();
-    //test_h_mmult_transpose_A();
-    //test_h_householder_qr();
-    test_qr(test_h_block_qr);
-    //test_dev_block_qr();
-    //test_tensorcore_mmult_gmem();
-    //test_tensorcore_mmult_tiled();
-    //test_template_tensorcore_mmult_tiled();
+    test_h_mmult();
+    test_h_mmult_transpose_A();
+
+    //test_qr(test_h_householder_qr);
+    //test_qr(test_dev_householder_qr);
+    //test_qr(test_h_block_qr);
+    //test_qr(test_dev_block_qr);
+
+    test_dev_smem_mmult(600, 400, 600);
+    test_tensorcore_mmult_gmem();
+    test_tensorcore_mmult_tiled();
+    test_template_tensorcore_mmult_tiled();
     //test_dev_block_qr_tensorcore_gmem();
 }
