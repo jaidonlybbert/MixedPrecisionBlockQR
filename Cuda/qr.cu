@@ -69,7 +69,7 @@ SOFTWARE.
 typedef void QR_FUNC(int, int, int);
 typedef void MMULT_FUNC(int, int, int);
 
-void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error) {
+void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error, std::string file_name = "logFile") {
     //write arguments to log file
     std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
     std::string line;
@@ -84,7 +84,7 @@ void h_write_results_to_log(int height, int width, float time_ms, float flops_pe
 
 
     std::ofstream logFile;
-    logFile.open("logFile.txt", std::ios::app);
+    logFile.open("log/" + file_name + ".txt", std::ios::app);
     logFile << line;
     logFile.close();
 }
@@ -1819,7 +1819,7 @@ void test_h_householder_qr(int m, int n, int r) {
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
-    h_write_results_to_log(m, n, 0, 0, backward_error);
+    h_write_results_to_log(m, n, 0, 0, backward_error, "cpu_householder");
 
 
     // write results to log file
@@ -1896,7 +1896,7 @@ void test_h_block_qr(int m, int n, int r) {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error);
+    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error, "cpu_block");
 
     printf("Sequential block QR finished in %.2f ms...\n", time_ms);
     //printf("||A - QR||/||A|| = %e\n", backward_error);
@@ -1938,7 +1938,7 @@ void test_qr(QR_FUNC f) {
         {129, 80, 16},
         {240, 160, 16},
         {600, 400, 16},
-        {1800, 1800, 32}
+        // {1800, 1800, 32}
     };
 
     for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
@@ -2050,7 +2050,7 @@ void test_dev_block_qr(int m, int n, int r) {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops, backward_error);
+    h_write_results_to_log(m, n, time_ms, flops, backward_error, "gpu_block");
 
     printf("GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
@@ -2071,9 +2071,9 @@ int main() {
     test_h_mmult();
     test_h_mmult_transpose_A();
 
-    //test_qr(test_h_householder_qr);
-    //test_qr(test_dev_householder_qr);
-    //test_qr(test_h_block_qr);
+    test_qr(test_h_householder_qr);
+    test_qr(test_dev_householder_qr);
+    test_qr(test_h_block_qr);
     //test_qr(test_dev_block_qr);
 
     //test_mmult(test_dev_smem_mmult);
