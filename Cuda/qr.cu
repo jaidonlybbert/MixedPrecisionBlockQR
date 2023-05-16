@@ -849,6 +849,11 @@ void dev_tensorcore_mmult_tiled(T_C* c_mtx, T_A* a_mtx, T_B* b_mtx, int m, int n
     }
 }
 
+__global__
+void dev_panel_wy_transform(float* dev_A, float* dev_Q, int m, int n, int global_offset, int panel_width) {
+
+}
+
 
 void test_tensorcore_mmult_gmem() {
     printf("\nTesting tensorcore 16x16x16 mmult...\n");
@@ -1184,6 +1189,10 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
 }
 
 template void h_launch_dev_tensorcore_mmult_tiled<half, half, float>(half*, half*, float*, int, int, int);
+
+void h_launch_dev_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, int panel_width) {
+
+}
 
 void test_template_tensorcore_mmult_tiled() {
     printf("\nTesting template tensorcore tiled mmult 33x33x33...\n");
@@ -1624,6 +1633,83 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         cudaFree(dev_Q);
         cudaFree(dev_panel_Q);
         cudaFree(dev_A_panel_result);
+        cudaFree(dev_Q_result);
+
+        free(panel_Q);
+
+        // increment panel offset
+        lambda = tau;
+    }
+}
+
+void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
+    /*
+    * GPU code to compute QR decomposition with Block QR algorithm
+    */
+
+    float* panel_Q = NULL;
+    int lambda = 0;
+    while (lambda < n) { // panel starts at lambda
+        int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
+
+        // Q is stored in factored form in lower triangular portion of dev_A
+        // R is stored in upper triangular portion of dev_A
+        h_householder_qr(A, m, n, lambda, tau - lambda);
+
+        // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
+        h_wy_transform(A, &panel_Q, m, n, lambda, tau - lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+
+        // Update matrix A = Q^T @ A
+        float blockWidth = 32.;
+        float blockHeight = 32.;
+
+        float* dev_A;
+        float* dev_Q;
+        float* dev_panel_Q;
+        float* dev_A_panel_result;
+        float* dev_Q_result;
+
+        cudaMalloc(&dev_A, m * n * sizeof(float));
+        cudaMalloc(&dev_Q, m * m * sizeof(float));
+        cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
+        cudaMalloc(&dev_A_panel_result, (m - lambda) * (n - tau) * sizeof(float));
+        cudaMalloc(&dev_Q_result, m * m * sizeof(float));
+
+        cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_Q_result, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
+
+        dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
+
+        // Updates trailing matrix in place : A = Qt @ A
+        shared_mem_mmult_in_place_transpose_a << <GridDim, BlockDim >> > (dev_A_panel_result, dev_panel_Q, dev_A,
+            (m - lambda), (n - tau), (m - lambda), m, n);
+
+        cudaDeviceSynchronize();
+
+        dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
+        dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
+        dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
+            (m - lambda), (n - tau), BOTTOM_RIGHT);
+
+        cudaDeviceSynchronize();
+
+        dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
+        dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> > (dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
+
+        cudaDeviceSynchronize();
+
+        cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(Q, dev_Q_result, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+
+        cudaFree(dev_A);
+        cudaFree(dev_Q);
+        cudaFree(dev_panel_Q);
+        cudaFree(dev_A_panel_result);
+        cudaFree(dev_Q_result);
 
         free(panel_Q);
 
@@ -2036,7 +2122,7 @@ void test_dev_block_qr(int m, int n, int r) {
 
     clock_t cycles = clock(); // Time how long the QR function takes to execute
     //h_block_qr((float*)A_out, Q1, m, n, r);
-    dev_block_qr((float*)A_out2, Q2, m, n, r);
+    dev_block_qr_wy((float*)A_out2, Q2, m, n, r);
     cycles = clock() - cycles;
 
     float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
