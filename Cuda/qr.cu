@@ -723,13 +723,13 @@ void shared_mem_mmult_in_place(float* c_mtx, float* a_mtx, float* b_mtx, int m, 
 __global__
 void shared_mem_mmult_in_place_transpose_a(float* c_mtx, float* a_mtx, float* b_mtx, int m, int n, int k, int b_height, int b_width)
 /*
-* Computes result c matrix from the matrix multiplication C = AB using shared memory with CUDA
+* Computes result c matrix from the matrix multiplication C = AB using shared memory
 * 
 * assumed m = k
 *
 * Dimensions:
 * A : m x k
-* B : b_height x b_width => operate on bottom-right corner k x n submatrix
+* B : b_height x b_width => operate on bottom-right corner k x n submatrix``1`1~!`
 * C : m x n
 */
 {
@@ -1529,7 +1529,7 @@ void dev_apply_qt_to_a_tensorcore_gmem(half* dev_A, half* dev_panel_Q, int m, in
 }
 
 __global__
-void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int lambda) {
+void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, float* dev_Q_result, int m, int lambda) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x + lambda;
 
@@ -1538,7 +1538,7 @@ void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, int m, int lambda) 
         for (int inner_dim = 0; inner_dim < (m - lambda); inner_dim++) {
             inner_product += dev_Q[row * m + inner_dim + lambda] * dev_Q_panel[(inner_dim * (m - lambda)) + (col - lambda)];
         }
-        dev_Q[row * m + col] = inner_product;
+        dev_Q_result[row * m + col] = inner_product;
     }
 }
 
@@ -1582,15 +1582,18 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         float* dev_Q;
         float* dev_panel_Q;
         float* dev_A_panel_result;
+        float* dev_Q_result;
 
         cudaMalloc(&dev_A, m * n * sizeof(float));
         cudaMalloc(&dev_Q, m * m * sizeof(float));
         cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
         cudaMalloc(&dev_A_panel_result, (m - lambda) * (n - tau) * sizeof(float));
+        cudaMalloc(&dev_Q_result, m * m * sizeof(float));
 
         cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
         cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
+        cudaMemcpy(dev_Q_result, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
 
         dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
@@ -1601,7 +1604,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
 
         cudaDeviceSynchronize();
 
-        dim3 gridDim2((int)ceil((float)m / TILE_WIDTH), (int)ceil((float)n / TILE_WIDTH), 1);
+        dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
         dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
         dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n, 
                                                                   (m - lambda), (n - tau), BOTTOM_RIGHT);
@@ -1610,16 +1613,17 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
 
         dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
-        dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> >(dev_Q, dev_panel_Q, m, lambda);
+        dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> >(dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
 
         cudaDeviceSynchronize();
 
         cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(Q, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+        cudaMemcpy(Q, dev_Q_result, m * m * sizeof(float), cudaMemcpyDeviceToHost);
         
         cudaFree(dev_A);
-        cudaFree(dev_panel_Q);
         cudaFree(dev_Q);
+        cudaFree(dev_panel_Q);
+        cudaFree(dev_A_panel_result);
 
         free(panel_Q);
 
@@ -1908,7 +1912,7 @@ struct QRProblemSize {
     int r; // block QR panel width
 };
 
-# define NUM_STATIC_QR_TESTS 14
+# define NUM_STATIC_QR_TESTS 21
 # define NUM_STATIC_MMULT_TESTS 15
 
 void test_qr(QR_FUNC f) {
@@ -1926,8 +1930,15 @@ void test_qr(QR_FUNC f) {
         {24, 16, 8},
         {24, 16, 12},
         {60, 40, 8},
+        {60, 40, 16},
+        {80, 80, 16},
+        {97, 90, 16},
+        {100, 80, 16},
+        {128, 80, 16},
+        {129, 80, 16},
         {240, 160, 16},
-        {600, 400, 16}
+        {600, 400, 16},
+        {1800, 1800, 32}
     };
 
     for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
@@ -2050,6 +2061,8 @@ void test_dev_block_qr(int m, int n, int r) {
     free(Q2);
     free(R);
     free(A_out);
+    free(A_out2);
+    free(A_in);
 }
 
 
@@ -2060,7 +2073,7 @@ int main() {
 
     //test_qr(test_h_householder_qr);
     //test_qr(test_dev_householder_qr);
-    test_qr(test_h_block_qr);
+    //test_qr(test_h_block_qr);
     //test_qr(test_dev_block_qr);
 
     //test_mmult(test_dev_smem_mmult);
