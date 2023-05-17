@@ -1753,7 +1753,8 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
         h_householder_qr(A, m, n, lambda, tau-lambda);
 
         // Get panel Q from factors
-        h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // dim panel_Q: (m-lambda)x(m-lambda)
+        //h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // dim panel_Q: (m-lambda)x(m-lambda)
+        h_q_panel_backward_accumulation(A, &panel_Q, m, n, lambda, tau - lambda);
 
         // Update matrix A = Q^T @ A
         float* A_old = (float*)malloc(m * n * sizeof(float));
