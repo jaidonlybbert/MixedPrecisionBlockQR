@@ -1,12 +1,28 @@
 import matplotlib.pyplot as plt
+from util import readFromLogFile
 
+cpu_runtime, cpu_flops = readFromLogFile('cpu_block')
+gpu_runtime, gpu_flops = readFromLogFile('gpu_block')
 
-rows = [100,200, 300, 400, 500, 600]
-runtime_cpu = [10,20,30,40,50,60]
-runtime_gpu = [5,10,15,20,25,30]
-plt.plot(rows, runtime_cpu,color='g',label='cpu')
-plt.plot(rows, runtime_gpu,color='b',label='gpu')
+runtime_cpu = [item[1] for item in sorted(cpu_runtime.items())] 
+runtime_gpu =[item[1] for item in sorted(gpu_runtime.items())] 
+
+# run time plot
+plt.plot(cpu_runtime.keys(), runtime_cpu,color='g',label='cpu')
+plt.plot(gpu_runtime.keys(), runtime_gpu,color='b',label='gpu')
 plt.xlabel('Matrix rows')
-plt.ylabel('Runtime(s)')
+plt.ylabel('Runtime(ms)')
 plt.legend(loc = "best")
+
+# flops plot
+plt.figure()
+flops_cpu = [item[1] for item in sorted(cpu_flops.items())] 
+flops_gpu = [item[1] for item in sorted(gpu_flops.items())] 
+plt.plot(cpu_flops.keys(), flops_cpu,color='g',label='cpu')
+plt.plot(gpu_flops.keys(), flops_gpu,color='b',label='gpu')
+plt.xlabel('Matrix rows')
+plt.ylabel('GFLOP/s')
+plt.legend(loc = "best")
+
+
 plt.show()
