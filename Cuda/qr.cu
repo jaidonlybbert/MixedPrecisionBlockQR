@@ -2042,7 +2042,7 @@ void test_dev_block_qr(int m, int n, int r) {
     h_matrix_cpy((float*)A_in, A_out2, m, n);
 
     clock_t cycles = clock(); // Time how long the QR function takes to execute
-    h_block_qr((float*)A_out, Q1, m, n, r);
+    //h_block_qr((float*)A_out, Q1, m, n, r);
     dev_block_qr((float*)A_out2, Q2, m, n, r);
     cycles = clock() - cycles;
 
