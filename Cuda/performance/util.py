@@ -1,6 +1,7 @@
 import csv
 from collections import defaultdict
 import math
+import os
 
 def getAverage(data, metrixIndex):
     result = defaultdict(list)
@@ -16,7 +17,7 @@ def getAverage(data, metrixIndex):
     return result
 
 def readFromLogFile(filename):
-    with open('./cuda/log/' + filename + '.txt', newline='') as csvfile:
+    with open(os.path.join(os.path.dirname(__file__), '../log', filename + '.txt'), newline='') as csvfile:
         spamreader = csv.reader(csvfile)
         data = list(spamreader)
         data.pop(0)
