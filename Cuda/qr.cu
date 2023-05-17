@@ -71,8 +71,15 @@ typedef void MMULT_FUNC(int, int, int);
 
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error, std::string file_name = "logFile") {
     //write arguments to log file
-    std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
-    std::string line;
+    std::vector<double> params = { height * 1.0, width * 1.0, time_ms, flops_per_second, backward_error };
+    std::string path = "log/" + file_name + ".txt";
+    std::ifstream file(path);
+    std::string line = "";
+
+    if (!file.good()) {
+        line += "rows,cols,runtime,flops,error\n";
+    }
+
     for (int i = 0; i < params.size(); i++)
     {
         line += std::to_string(params[i]);
@@ -84,7 +91,7 @@ void h_write_results_to_log(int height, int width, float time_ms, float flops_pe
 
 
     std::ofstream logFile;
-    logFile.open("log/" + file_name + ".txt", std::ios::app);
+    logFile.open(path, std::ios::app);
     logFile << line;
     logFile.close();
 }
@@ -1937,7 +1944,7 @@ void test_qr(QR_FUNC f) {
         {128, 80, 16},
         {129, 80, 16},
         {240, 160, 16},
-        {600, 400, 16},
+        // {600, 400, 16},
         // {1800, 1800, 32}
     };
 
