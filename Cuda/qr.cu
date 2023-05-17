@@ -1826,7 +1826,7 @@ void test_h_householder_qr(int m, int n, int r) {
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
-    h_write_results_to_log(m, n, 0, 0, backward_error, "cpu_householder");
+    h_write_results_to_log(m, n, time_ms, flops, backward_error, "cpu_householder");
 
 
     // write results to log file
@@ -1944,7 +1944,7 @@ void test_qr(QR_FUNC f) {
         {128, 80, 16},
         {129, 80, 16},
         {240, 160, 16},
-        // {600, 400, 16},
+        {600, 400, 16},
         // {1800, 1800, 32}
     };
 
