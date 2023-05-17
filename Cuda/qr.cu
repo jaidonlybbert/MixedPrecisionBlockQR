@@ -424,6 +424,54 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
     }
 }
 
+void h_q_panel_backward_accumulation(float* h_A, float** panel_Q, int m, int n, int global_offset, int panel_width) {
+    /*
+    * "Backward accumulation" of Q from householder vectors stored in lower trapezoidal region
+    *   of A, after householder QR
+    *
+    * Reference:
+    *   Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins
+    *   University Press. Pg. 238. Algorithm 5.1.5
+    */
+
+    // Initialize panel Q as identity (always a square matrix)
+    int panel_q_dim = m - global_offset;
+    * panel_Q = (float*)malloc(panel_q_dim * panel_q_dim * sizeof(float));
+    h_identity_mtx(*panel_Q, panel_q_dim, panel_q_dim);
+
+    // Declare temporary vectors
+    float* v;
+    float beta;
+
+    for (int j = global_offset + panel_width - 1; j >= global_offset; j--) { // iterate over householder vectors stored in lower part of A
+        int v_length = m - j; // v is the householder vector, smallest first
+        v = (float*)malloc(v_length * sizeof(float));
+
+        // Q = (Im - 2v(v^T))Q
+        // Q = Q_j:m,j:m - 2V @ ((V^T) @ Q_j:m,j:m)
+
+        // (V^T) @ Q_j:m,j:m
+        float* temp = (float*)malloc(v_length * sizeof(float));
+        for (int col = j; col < m; col++) { // col of matrix A, where v is stored
+            float inner_product = 0;
+            for (int row = j; row < m; row++) { // rows of matrix A, where v is stored
+                inner_product += 
+                    h_A[(row + 1) * n + j] * (*panel_Q)[(row-global_offset) * panel_q_dim + (col-global_offset)];
+            }
+            temp[col - j] = inner_product;
+        }
+
+        // Q_j:m,j:m = Q_j:m,j:m - 2 * V @ ((V^T) @ Q_j:m,j:m)
+        for (int row = j; row < m; row++) { // row of Q result
+            for (int col = j; col < m; col++) { // col of Q result
+                (*panel_Q)[(row-global_offset) * panel_q_dim + (col-global_offset)] = 
+                    (*panel_Q)[(row-global_offset) * panel_q_dim + (col-global_offset)] - 
+                            2.0 * h_A[(row + 1) * n + j] * temp[col - j];
+            }
+        }
+    }
+}
+
 void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, int panel_width)
 {
     nvtxRangePush(__func__);
@@ -1563,6 +1611,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
     */
 
     float* panel_Q = NULL;
+    float* panel_Q_wy = NULL;
     int lambda = 0;
     while (lambda < n) { // panel starts at lambda
         int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
@@ -1572,7 +1621,8 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         h_householder_qr(A, m, n, lambda, tau-lambda);
 
         // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+        //h_wy_transform(A, &panel_Q_wy, m, n, lambda, tau-lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+        h_q_panel_backward_accumulation(A, &panel_Q, m, n, lambda, tau-lambda);
 
         // Update matrix A = Q^T @ A
         float blockWidth = 32.;
