@@ -44,6 +44,9 @@ SOFTWARE.
 #include <assert.h>
 #include <cstdlib>
 #include <vector>
+#include <chrono>
+#include <dirent.h>
+#include <iomanip>
 
 #define TC_TILE_M 16
 #define TC_TILE_N 16
@@ -1884,25 +1887,116 @@ void test_h_householder_qr(int m, int n, int r) {
     free(Q);
     free(R);
     free(A_out);
+    free(A_in);
 }
 
-void test_h_householder_qr() {
+/*
+ * Test jacobian matrices for householder_qr
+ * ||A - QR||/||A|| = -nan Error Criteria: False
+ * uncertain reason for the error.
+ */
+void process_files_in_directory(const char *directory_path,
+                                const char *file_prefix) {
+  DIR *dir;
+  struct dirent *ent;
 
+  if ((dir = opendir(directory_path)) != NULL) {
+    while ((ent = readdir(dir)) != NULL) {
+      if (ent->d_type == DT_REG) {
+        if (strncmp(ent->d_name, file_prefix, strlen(file_prefix)) == 0) {
+          char path[512];
+          snprintf(path, sizeof(path), "%s/%s", directory_path, ent->d_name);
+          printf("Processing file: %s\n", path);
+
+          int rows, cols;
+          double *A_in;
+          read_euroc_jacobian(path, &rows, &cols, &A_in);
+          int m = rows;
+          int n = cols;
+          int global_offset = 0;
+
+          float *Q = (float *)malloc(m * m * sizeof(float));
+          float *R = (float *)malloc(m * n * sizeof(float));
+          float *A_out = (float *)malloc((m + 1) * n * sizeof(float));
+
+          h_matrix_cpy((float *)A_in, A_out, m, n);
+
+          // Start timing
+          auto start_time = std::chrono::high_resolution_clock::now();
+          h_householder_qr((float *)A_out, m, n, 0, n);
+          // Calculate elapsed time
+          auto end_time = std::chrono::high_resolution_clock::now();
+          std::chrono::duration<float, std::milli> elapsed_time =
+              end_time - start_time;
+          float time_ms = elapsed_time.count();
+          float flops = h_qr_flops_per_second(time_ms, m, n);
+          // Print elapsed time with appropriate unit
+          std::string unit;
+          float time_value;
+          if (time_ms < 1000.0f) {
+            time_value = time_ms;
+            unit = "ms";
+          } else if (time_ms < 60000.0f) {
+            time_value = time_ms / 1000.0f;
+            unit = "s";
+          } else {
+            time_value = time_ms / 60000.0f;
+            unit = "min";
+          }
+
+          // h_wy_transform(A_out, &Q, m, n, global_offset, r);
+          h_q_backward_accumulation(A_out, &Q, m, n);
+          h_strip_R_from_A((float *)A_out, R, m, n);
+
+          float backward_error = h_backward_error((float *)A_in, R, Q, m, n);
+          float error3 = h_error_3(R, m, n);
+          float error2 = h_error_2(Q, m);
+
+          // printf("||A - QR||/||A|| = %e\n", backward_error);
+          // printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
+          // printf("||L|| = %e\n", error3);
+          printf("Averaged %.4f GFLOPs\n", flops / 1E9);
+          std::cout << "Sequential householder finished in " << std::fixed
+                    << std::setprecision(4) << time_value << " " << unit
+                    << std::endl;
+          h_write_results_to_log(m, n, 0, 0, backward_error, "cpu_householder");
+
+          free(Q);
+          free(R);
+          free(A_out);
+          free(A_in);
+        }
+      }
+    }
+    closedir(dir);
+  } else {
+    perror("Unable to open directory");
+  }
+}
+
+void test_h_jhouseholder_qr() {
+  printf("\nTesting (jacobians) sequential householder QR...\n");
+  const char *directory_path =
+      "/home/qr/Desktop/MixedPrecisionBlockQR/Cuda/jacobians/";
+
+  printf("Processing A_reduced files:\n");
+  process_files_in_directory(directory_path, "A_reduced");
+
+  // The execution is taking an amount of time
+  // printf("\nProcessing A_0 files:\n");
+  // process_files_in_directory(directory_path, "A_0");
+
+  printf("\n(jacobians) Sequential householder QR finished...\n");
 }
 
 
-void test_h_wy_transform() {
+
+void test_h_wy_transform(int m, int n, int r) {
     // Initialize test matrix A input on Host
     // TASK16 Alice: iterate over many matrix sizes
-    int m = 3;
-    int n = 3;
+    printf("Dimensions of A: %dx%d\n", m, n);
 
-    // TASK17 Alice: use h_generate_random_matrix to randomize input matrix
-    float h_A_in[3][3] = {
-        {12, -51, 4},
-        {6, 167, -68},
-        {-4, 24, -41},
-    };
+    float *h_A_in = h_generate_random_matrix(m, n);
 
     float* h_A_out = (float*)malloc((m + 1) * n * sizeof(float)); // extra row (m+1) gives room for storing householder vectors in lower triangular portion of A
     float* h_R = (float*)malloc(m * n * sizeof(float));
@@ -2128,6 +2222,7 @@ void test_dev_block_qr(int m, int n, int r) {
 int main() {
     test_h_mmult();
     test_h_mmult_transpose_A();
+    test_h_jhouseholder_qr();
 
     test_qr(test_h_householder_qr);
     test_qr(test_dev_householder_qr);
