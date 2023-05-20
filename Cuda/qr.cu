@@ -47,6 +47,8 @@ SOFTWARE.
 #include <chrono>
 #include <dirent.h>
 #include <iomanip>
+#include <sstream>
+#include <algorithm>
 
 #define TC_TILE_M 16
 #define TC_TILE_N 16
@@ -2057,6 +2059,53 @@ void test_h_block_qr(int m, int n, int r) {
     free(A_out);
 }
 
+struct MatrixInfo {
+    std::string filePath;
+    int m;
+    int n;
+};
+bool compareByRow(const MatrixInfo& item1, const MatrixInfo& item2) {
+    return item1.m < item2.m;
+}
+std::vector<MatrixInfo> get_jacobians_test_matrixs() {
+    std::string folderPath = "./jacobians";
+    std::vector<MatrixInfo> list;
+    for (int i = 100; i <= 22500; i += 100) {
+        std::ostringstream oss;
+        oss << "A_" << std::setfill('0') << std::setw(9) << i << ".txt";
+        std::string filename = oss.str();
+        std::string filePath = folderPath + "/" + filename;
+
+        std::ifstream file(filePath);
+
+        if (file.is_open()) {
+            std::string line;
+            std::getline(file, line);
+            std::istringstream iss(line);
+            int m, n;
+            iss >> m >> n;
+            MatrixInfo info;
+            info.filePath = filePath;
+            info.m = m;
+            info.n = n;
+            list.push_back(info);
+            //read file conten if needed
+            // while (std::getline(file, line)) {
+            // }
+            file.close();
+        } else {
+            std::cout << "can not open file:" << filePath << std::endl;
+        }
+    }
+    std::sort(list.begin(), list.end(), compareByRow);
+    std::vector<MatrixInfo> result;
+    int matrixCount = 10;
+    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
+        result.push_back(list[i]);
+    }
+    return result;
+}
+
 struct QRProblemSize {
     // A = QR problem set dimensions
     int m; // height of matrix A
@@ -2068,7 +2117,14 @@ struct QRProblemSize {
 # define NUM_STATIC_MMULT_TESTS 15
 
 void test_qr(QR_FUNC f) {
-
+    //TODO: read matrix from file path and test it
+    // std::vector<MatrixInfo> list = get_jacobians_test_matrixs();
+    // for (const auto& item : list) {
+    //     std::cout << "FilePath: " << item.filePath << std::endl;
+    //     std::cout << "m: " << item.m << std::endl;
+    //     std::cout << "n: " << item.n << std::endl;
+    //     std::cout << "-------------------" << std::endl;
+    // }
     QRProblemSize testDim[NUM_STATIC_QR_TESTS] = {
         {6, 4, 2},
         {6, 4, 1},
@@ -2220,19 +2276,18 @@ void test_dev_block_qr(int m, int n, int r) {
 
 
 int main() {
-    test_h_mmult();
-    test_h_mmult_transpose_A();
-    test_h_jhouseholder_qr();
+    // test_h_mmult();
+    // test_h_mmult_transpose_A();
+    // test_h_jhouseholder_qr();
 
     test_qr(test_h_householder_qr);
     test_qr(test_dev_householder_qr);
     test_qr(test_h_block_qr);
-    //test_qr(test_dev_block_qr);
+    test_qr(test_dev_block_qr);
 
     //test_mmult(test_dev_smem_mmult);
     //test_mmult_in_place();
     //test_mmult_in_place_transpose_a();
-    test_qr(test_dev_block_qr);
     //test_mmult(test_dev_smem_mmult_in_place);
 
     //test_dev_smem_mmult(6000, 4000, 6000);
