@@ -76,6 +76,7 @@
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <CodeGeneration>compute_86,sm_86</CodeGeneration>
+      <Include>C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\QR</Include>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
