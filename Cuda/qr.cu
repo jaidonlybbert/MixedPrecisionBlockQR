@@ -1378,14 +1378,13 @@ void h_launch_dev_wy_transform(float* dev_A, float* dev_panel_Q, int m, int n, i
     int W_Yt_dim = m - global_offset;
 
     // Y = w_1
+    // W = 2 * w_1
     // Configure grid of thread blocks
     int grid_dim = W_Yt_dim / VECTOR_OP_1D_BLOCK_WIDTH +
         (W_Yt_dim % VECTOR_OP_1D_BLOCK_WIDTH != 0); // Integer div. rounded up
     dim3 gridDim(grid_dim, 1, 1);
     dim3 blockDim(VECTOR_OP_1D_BLOCK_WIDTH, 1, 1);
     dev_wy_init << <gridDim, blockDim >> > (dev_A, dev_Y, dev_W, global_offset, n, W_Yt_dim, panel_width);
-
-    clock_t cycles = clock();
 
     // Iterate over columns of panel and update W, Y
     for (int i = 1; i < panel_width; i++) { // cols of panel
@@ -1398,7 +1397,7 @@ void h_launch_dev_wy_transform(float* dev_A, float* dev_panel_Q, int m, int n, i
                 int col_offset = col * panel_width;
                 // compute each inner product
                 float inner_product = 0;
-                for (int idx = 0; idx < i; idx++) { // idx of columns of W
+                for (int idx = 0; idx < i; idx++) { // inner dimension
                     inner_product += dev_W[row_offset + idx] * dev_Y[col_offset + idx];
                 }
                 if (row == col) { // Im is 1
@@ -1923,7 +1922,7 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
         h_householder_qr(A, m, n, lambda, tau - lambda);
 
         // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        h_wy_transform(A, &panel_Q, m, n, lambda, tau - lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+        //h_wy_transform(A, &panel_Q, m, n, lambda, tau - lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
 
         // Update matrix A = Q^T @ A
         float blockWidth = 32.;
@@ -2265,7 +2264,7 @@ struct QRProblemSize {
     int r; // block QR panel width
 };
 
-# define NUM_STATIC_QR_TESTS 21
+# define NUM_STATIC_QR_TESTS 20
 # define NUM_STATIC_MMULT_TESTS 15
 
 void test_qr(QR_FUNC f) {
@@ -2389,7 +2388,7 @@ void test_dev_block_qr(int m, int n, int r) {
 
     clock_t cycles = clock(); // Time how long the QR function takes to execute
     //h_block_qr((float*)A_out, Q1, m, n, r);
-    dev_block_qr((float*)A_out2, Q2, m, n, r);
+    dev_block_qr_wy(A_out2, Q2, m, n, r);
     cycles = clock() - cycles;
 
     float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
@@ -2424,10 +2423,10 @@ int main() {
     test_h_mmult();
     test_h_mmult_transpose_A();
 
-    test_qr(test_h_householder_qr);
-    test_qr(test_dev_householder_qr);
-    test_qr(test_h_block_qr);
-    //test_qr(test_dev_block_qr);
+    //test_qr(test_h_householder_qr);
+    //test_qr(test_dev_householder_qr);
+    //test_qr(test_h_block_qr);
+    test_qr(test_dev_block_qr);
 
     // Tasks remaining:
     // 0) Optimize or replace WY transform
@@ -2443,12 +2442,11 @@ int main() {
     //test_mmult(test_dev_smem_mmult);
     //test_mmult_in_place();
     //test_mmult_in_place_transpose_a();
-    test_qr(test_dev_block_qr);
     //test_mmult(test_dev_smem_mmult_in_place);
 
     //test_dev_smem_mmult(6000, 4000, 6000);
     //test_tensorcore_mmult_gmem();
     //test_tensorcore_mmult_tiled();
-    //test_template_tensorcore_mmult_tiled();
+    test_template_tensorcore_mmult_tiled();
     //test_dev_block_qr_tensorcore_gmem();
 }
