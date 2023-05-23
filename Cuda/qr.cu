@@ -71,7 +71,7 @@ SOFTWARE.
 #define TOP_LEFT 1
 #define BOTTOM_RIGHT 0
 
-typedef void QR_FUNC(int, int, int);
+typedef void QR_FUNC(int, int, int, float*);
 typedef void MMULT_FUNC(int, int, int);
 
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error, std::string file_name = "logFile") {
@@ -160,7 +160,7 @@ void h_matrix_subtract(float* A, float* B, float* C, int m, int n) {
     }
 }
 
-float h_matrix_norm(float* A, int m, int n) {
+double h_matrix_norm(float* A, int m, int n) {
     /*
     * A shape: mxn
     *
@@ -168,7 +168,7 @@ float h_matrix_norm(float* A, int m, int n) {
     */
 
     float norm = 0;
-    float squared_sum = 0;
+    double squared_sum = 0;
     for (int row = 0; row < m; row++) {
         for (int col = 0; col < n; col++) {
             squared_sum += A[row * n + col] * A[row * n + col];
@@ -1436,7 +1436,7 @@ float* h_generate_random_matrix(int height, int width) {
     return matrix;
 }
 
-void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** matrix) {
+void read_euroc_jacobian(std::string filename, int* rows, int* cols, float** matrix) {
     /*
     * Reads text file containing jacobian matrices from the Euroc dataset, and returns pointer to matrix
     */
@@ -1472,11 +1472,11 @@ void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** m
     printf("Rows: %d\nCols: %d\n", *rows, *cols);
 
     // Allocate memory for matrix
-    *matrix = (double*)malloc((*rows) * (*cols) * sizeof(double));
+    *matrix = (float*)malloc((*rows) * (*cols) * sizeof(float));
 
     for (int row = 0; row < (*rows); row++) {
         for (int col = 0; col < (*cols); col++) {
-            (*matrix)[row * (*cols) + col] = (double)0.0;
+            (*matrix)[row * (*cols) + col] = (float)0.0;
         }
     }
 
@@ -1695,11 +1695,10 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
 }
 
 
-void test_dev_householder_qr(int m, int n, int r) {
+void test_dev_householder_qr(int m, int n, int r, float * h_A_in) {
     printf("\nTesting GPU householder QR...\n");
     printf("Dimensions of A: %dx%d\n", m, n);
 
-    float* h_A_in = h_generate_random_matrix(m, n);
 
     float* h_A_out = (float*)malloc((m+1) * n * sizeof(float)); // extra row gives room for storing householder vectors in lower triangular portion of A
     float* h_Q_out = (float*)malloc(m * m * sizeof(float));
@@ -1841,7 +1840,7 @@ void test_h_mmult_transpose_A() {
     }
 }
 
-void test_h_householder_qr(int m, int n, int r) {
+void test_h_householder_qr(int m, int n, int r, float* A_in ) {
     /*
     * Test host version of householder QR
     */
@@ -1850,8 +1849,6 @@ void test_h_householder_qr(int m, int n, int r) {
     printf("\nTesting sequential householder QR...\n");
 
     printf("Dimensions of A: %dx%d\n", m, n);
-
-    float* A_in = h_generate_random_matrix(m, n);
 
     int global_offset = 0;
 
@@ -1912,7 +1909,7 @@ void process_files_in_directory(const char *directory_path,
 
           int rows, cols;
           double *A_in;
-          read_euroc_jacobian(path, &rows, &cols, &A_in);
+        //   read_euroc_jacobian(path, &rows, &cols, &A_in);
           int m = rows;
           int n = cols;
           int global_offset = 0;
@@ -2018,7 +2015,7 @@ void test_h_wy_transform(int m, int n, int r) {
 }
 
 
-void test_h_block_qr(int m, int n, int r) {
+void test_h_block_qr(int m, int n, int r, float* A_in) {
     /*
     * Test host version of block QR
     */
@@ -2026,7 +2023,7 @@ void test_h_block_qr(int m, int n, int r) {
     printf("\nTesting sequential block QR...\n");
     printf("Dimensions of A (m, n, r): (%d,%d,%d)\n", m, n, r);
 
-    float* A_in = h_generate_random_matrix(m, n);
+    // float* A_in = h_generate_random_matrix(m, n);
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
@@ -2099,7 +2096,7 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     }
     std::sort(list.begin(), list.end(), compareByRow);
     std::vector<MatrixInfo> result;
-    int matrixCount = 10;
+    int matrixCount = 20;
     for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
         result.push_back(list[i]);
     }
@@ -2117,40 +2114,13 @@ struct QRProblemSize {
 # define NUM_STATIC_MMULT_TESTS 15
 
 void test_qr(QR_FUNC f) {
-    //TODO: read matrix from file path and test it
-    // std::vector<MatrixInfo> list = get_jacobians_test_matrixs();
-    // for (const auto& item : list) {
-    //     std::cout << "FilePath: " << item.filePath << std::endl;
-    //     std::cout << "m: " << item.m << std::endl;
-    //     std::cout << "n: " << item.n << std::endl;
-    //     std::cout << "-------------------" << std::endl;
-    // }
-    QRProblemSize testDim[NUM_STATIC_QR_TESTS] = {
-        {6, 4, 2},
-        {6, 4, 1},
-        {6, 4, 3},
-        {12, 8, 4},
-        {12, 8, 5},
-        {12, 8, 6},
-        {12, 8, 2},
-        {12, 8, 8},
-        {12, 8, 3},
-        {24, 16, 8},
-        {24, 16, 12},
-        {60, 40, 8},
-        {60, 40, 16},
-        {80, 80, 16},
-        {97, 90, 16},
-        {100, 80, 16},
-        {128, 80, 16},
-        {129, 80, 16},
-        {240, 160, 16},
-        {600, 400, 16},
-        {1800, 1800, 32},
-    };
-
-    for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
-        f(testDim[i].m, testDim[i].n, testDim[i].r);
+    std::vector<MatrixInfo> list = get_jacobians_test_matrixs();
+    for (const auto& item : list) {
+        int m;
+        int n;
+        float *A_in;
+        read_euroc_jacobian(item.filePath, &m, &n, &A_in);
+        f(m, n, 16, A_in);
     }
 }
 
@@ -2220,7 +2190,7 @@ void test_mmult_in_place_transpose_a() {
     }
 }
 
-void test_dev_block_qr(int m, int n, int r) {
+void test_dev_block_qr(int m, int n, int r, float * A_in) {
     /*
     * Test GPU version of block QR
     */
@@ -2228,7 +2198,6 @@ void test_dev_block_qr(int m, int n, int r) {
     printf("\nTesting GPU block QR...\n");
     printf("Dimensions of A (m, n, r): (%d, %d, %d)\n", m, n, r);
 
-    float* A_in = h_generate_random_matrix(m, n);
 
     float* Q1 = (float*)malloc(m * m * sizeof(float));
     float* Q2 = (float*)malloc(m * m * sizeof(float));
@@ -2281,9 +2250,10 @@ int main() {
     // test_h_jhouseholder_qr();
 
     test_qr(test_h_householder_qr);
-    test_qr(test_dev_householder_qr);
-    test_qr(test_h_block_qr);
+    // test_qr(test_dev_householder_qr);
     test_qr(test_dev_block_qr);
+    // test_qr(test_h_block_qr);
+
 
     //test_mmult(test_dev_smem_mmult);
     //test_mmult_in_place();
