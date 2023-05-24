@@ -2105,7 +2105,7 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     std::sort(list.begin(), list.end(), compareByRow);
     std::vector<MatrixInfo> result;
     int matrixCount = 10;
-    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 10) {
+    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
         result.push_back(list[i]);
     }
     return result;
