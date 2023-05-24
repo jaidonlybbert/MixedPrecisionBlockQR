@@ -1862,11 +1862,13 @@ void test_h_householder_qr(int m, int n, int r, float* A_in ) {
     h_matrix_cpy((float*)A_in, A_out, m, n);
     
 
-    //h_block_qr((float*)A, Q, m, n, r);
-    clock_t cycles = clock();
+    auto start_time = std::chrono::high_resolution_clock::now();
     h_householder_qr(A_out, m, n, 0, n);
-    cycles = clock() - cycles;
-    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+    end_time - start_time;
+    float time_ms = elapsed_time.count();
+
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
     h_q_backward_accumulation(A_out, &Q, m, n);
@@ -2036,10 +2038,13 @@ void test_h_block_qr(int m, int n, int r, float* A_in) {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    clock_t cycles = clock(); // Time how long the QR function takes to execute
+    auto start_time = std::chrono::high_resolution_clock::now();
     h_block_qr((float*)A_out, Q, m, n, r);
-    cycles = clock() - cycles;
-    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+    end_time - start_time;
+    float time_ms = elapsed_time.count();
+
 
     float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
 
@@ -2100,7 +2105,7 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     std::sort(list.begin(), list.end(), compareByRow);
     std::vector<MatrixInfo> result;
     int matrixCount = 10;
-    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
+    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 10) {
         result.push_back(list[i]);
     }
     return result;
@@ -2214,13 +2219,14 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     h_matrix_cpy((float*)A_in, A_out, m, n);
     h_matrix_cpy((float*)A_in, A_out2, m, n);
 
-    clock_t cycles = clock(); // Time how long the QR function takes to execute
-    //h_block_qr((float*)A_out, Q1, m, n, r);
+
+    auto start_time = std::chrono::high_resolution_clock::now();
     dev_block_qr((float*)A_out2, Q2, m, n, r);
-    cycles = clock() - cycles;
-
-    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
-
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+    end_time - start_time;
+    float time_ms = elapsed_time.count();
+        
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
     h_strip_R_from_A((float*)A_out2, R, m, n);
@@ -2252,10 +2258,11 @@ int main() {
     // test_h_mmult_transpose_A();
     // test_h_jhouseholder_qr();
     test_qr(test_dev_block_qr);
-    test_qr(test_h_householder_qr);
+    test_qr(test_h_block_qr);
+    // test_qr(test_h_householder_qr);
     // test_qr(test_dev_householder_qr);
 
-    // test_qr(test_h_block_qr);
+
 
 
     //test_mmult(test_dev_smem_mmult);

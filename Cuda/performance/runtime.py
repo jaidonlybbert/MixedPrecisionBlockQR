@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 from util import readFromLogFile
 
-cpu_runtime, cpu_flops = readFromLogFile('cpu_householder')
+cpu_runtime, cpu_flops = readFromLogFile('cpu_block')
 gpu_runtime, gpu_flops = readFromLogFile('gpu_block')
 
 runtime_cpu = [item[1] for item in sorted(cpu_runtime.items())] 
