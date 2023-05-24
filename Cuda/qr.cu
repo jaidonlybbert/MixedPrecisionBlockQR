@@ -455,7 +455,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         // Flops: (m-global_offset)x(m-global_offset)x(i)
         for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
             int row_offset = row * panel_width;
-            for (int col = i; col < W_Yt_dim; col++) { // cols of W_Yt
+            for (int col = 0; col < W_Yt_dim; col++) { // cols of W_Yt
                 int col_offset = col * panel_width;
                 // compute each inner product
                 float inner_product = 0;
@@ -1238,6 +1238,8 @@ void test_dev_smem_mmult_in_place_transpose_a(int m, int n, int k, int b_width, 
     printf("Test passed.\n");
 }
 
+
+
 template <typename T_A, typename T_B, typename T_C>
 void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int m, int n, int k) {
     /*
@@ -1342,20 +1344,26 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
         }
 
         if ((i * TILE_WIDTH + ty < panel_width) && (col < W_Yt_dim)) {
-            bds[ty][tx] = dev_Y[(i * TILE_WIDTH + ty) * W_Yt_dim + col]; 
+            bds[tx][ty] = dev_Y[col * panel_width + (i * TILE_WIDTH) + ty];
         }
 
         __syncthreads();
 
         for (int k = 0; k < TILE_WIDTH; k++) {
-            if ((i * TILE_WIDTH + k) < panel_width)
-                pval += ads[ty][k] * bds[k][tx];
+            if ((i * TILE_WIDTH + k) < column_idx)
+                pval += ads[ty][k] * bds[tx][k];
         }
         __syncthreads();
     }
 
     if (col < W_Yt_dim && row < W_Yt_dim) {
-        dev_W_Yt[row * W_Yt_dim + col] = pval;
+        if (row == col) {
+            dev_W_Yt[row * W_Yt_dim + col] = 1 - pval;
+        }
+        else {
+            dev_W_Yt[row * W_Yt_dim + col] = -pval;
+        }
+        
     }
 
 }
@@ -2215,6 +2223,96 @@ void test_h_wy_transform() {
     free(h_R);
 }
 
+void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_column) {
+    /*
+    * Tests subroutine for WY representation on GPU
+    */
+
+    printf("\nTesting GPU SMEM (Im - W @ Yt) kernel %dx%d...\n", W_Yt_dim, panel_width);
+
+    size_t W_size = W_Yt_dim * panel_width * sizeof(float);
+    size_t Y_size = W_Yt_dim * panel_width * sizeof(float);
+    size_t W_Yt_size = W_Yt_dim * W_Yt_dim * sizeof(float);
+
+    float* W = (float*)malloc(W_size);
+    float* Y = (float*)malloc(Y_size);
+    float* dev_result_W_Yt = (float*)malloc(W_Yt_size);
+    float* h_result_W_Yt = (float*)malloc(W_Yt_size);
+
+    // initialize matrix A
+    for (int i = 0; i < W_Yt_dim; i++) {
+        for (int j = 0; j < panel_width; j++) {
+            W[i * panel_width + j] = (float)i+1;
+            Y[i * panel_width + j] = (float)i+1;
+        }
+    }
+
+    memset(dev_result_W_Yt, 0.0, W_Yt_size);
+    memset(h_result_W_Yt, 0.0, W_Yt_size);
+
+    float* dev_W;
+    float* dev_Y;
+    float* dev_WYt;
+
+    cudaMalloc(&dev_W, W_size);
+    cudaMalloc(&dev_Y, Y_size);
+    cudaMalloc(&dev_WYt, W_Yt_size);
+
+    cudaMemcpy(dev_W, W, W_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_Y, Y, Y_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_WYt, dev_result_W_Yt, W_Yt_size, cudaMemcpyHostToDevice);
+
+    // Configure grid
+    dim3 gridDim((int)ceil((float)W_Yt_dim / TILE_WIDTH), (int)ceil((float)W_Yt_dim / TILE_WIDTH), 1);
+    dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
+
+    // Launch kernel
+    dev_wy_compute_Im_sub_W_Yt << <gridDim, blockDim >> > (dev_WYt, dev_W, dev_Y, panel_width, current_column, W_Yt_dim);
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(W, dev_W, W_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(Y, dev_Y, Y_size, cudaMemcpyDeviceToHost);
+    cudaMemcpy(dev_result_W_Yt, dev_WYt, W_Yt_size, cudaMemcpyDeviceToHost);
+
+    // Run CPU version for comparison
+    for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
+        int row_offset = row * panel_width;
+        for (int col = 0; col < W_Yt_dim; col++) { // cols of W_Yt
+            int col_offset = col * panel_width;
+            // compute each inner product
+            float inner_product = 0;
+            for (int idx = 0; idx < current_column; idx++) { // idx of columns of W
+                inner_product += W[row_offset + idx] * Y[col_offset + idx];
+            }
+            if (row == col) { // Im is 1
+                h_result_W_Yt[row * W_Yt_dim + col] = 1 - inner_product; // Im - WY^T
+            }
+            else { // Im is zero
+                h_result_W_Yt[row * W_Yt_dim + col] = -inner_product;
+            }
+        }
+    }
+
+    // Compare GPU and CPU result
+    bool pass = true;
+    for (int row = 0; row < W_Yt_dim; row++) {
+        for (int col = 0; col < W_Yt_dim; col++) {
+            if (h_result_W_Yt[row * W_Yt_dim + col] != dev_result_W_Yt[row * W_Yt_dim + col]) {
+                pass = false;
+            }
+        }
+    }
+
+    if (pass) {
+        printf("Test passed.\n");
+    }
+    else {
+        printf("Test failed.\n");
+    }
+
+}
+
 
 void test_h_block_qr(int m, int n, int r) {
     /*
@@ -2387,8 +2485,8 @@ void test_dev_block_qr(int m, int n, int r) {
     h_matrix_cpy((float*)A_in, A_out2, m, n);
 
     clock_t cycles = clock(); // Time how long the QR function takes to execute
-    //h_block_qr((float*)A_out, Q1, m, n, r);
-    dev_block_qr_wy(A_out2, Q2, m, n, r);
+    h_block_qr((float*)A_out2, Q2, m, n, r);
+    //dev_block_qr_wy(A_out2, Q2, m, n, r);
     cycles = clock() - cycles;
 
     float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
@@ -2422,6 +2520,15 @@ void test_dev_block_qr(int m, int n, int r) {
 int main() {
     test_h_mmult();
     test_h_mmult_transpose_A();
+
+    for (int rows = 10; rows < 1000; rows *= 2) {
+        for (int panel_width = 2; panel_width < 16; panel_width *= 2) {
+            for (int current_column = 1; current_column < panel_width; current_column *= 2) {
+                test_dev_wy_compute_Im_sub_W_Yt(rows, panel_width, current_column);
+            }
+        }
+    }
+    
 
     //test_qr(test_h_householder_qr);
     //test_qr(test_dev_householder_qr);
