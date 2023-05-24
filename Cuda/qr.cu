@@ -341,8 +341,11 @@ void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width
         for (int i = 0; i < len; i++) {
             mag += u[i] * u[i];
         }
+        if (mag == 0) {
+            continue;
+        }
         mag = sqrtf(mag);
-
+        
         // Compute householder normal vector w_k
         u[0] = sign * mag + u[0]; // v overwrites u
         // Normalize
@@ -1879,7 +1882,7 @@ void test_h_householder_qr(int m, int n, int r, float* A_in ) {
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
-    h_write_results_to_log(m, n, time_ms, flops, backward_error, "cpu_householder");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "cpu_householder");
 
 
     // write results to log file
@@ -1958,7 +1961,7 @@ void process_files_in_directory(const char *directory_path,
           std::cout << "Sequential householder finished in " << std::fixed
                     << std::setprecision(4) << time_value << " " << unit
                     << std::endl;
-          h_write_results_to_log(m, n, 0, 0, backward_error, "cpu_householder");
+          //h_write_results_to_log(m, n, time, 0, backward_error, "cpu_householder");
 
           free(Q);
           free(R);
@@ -2047,7 +2050,7 @@ void test_h_block_qr(int m, int n, int r, float* A_in) {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error, "cpu_block");
+    h_write_results_to_log(m, n, time_ms, flops_per_second / 1E9, backward_error, "cpu_block");
 
     printf("Sequential block QR finished in %.2f ms...\n", time_ms);
     //printf("||A - QR||/||A|| = %e\n", backward_error);
@@ -2096,7 +2099,7 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     }
     std::sort(list.begin(), list.end(), compareByRow);
     std::vector<MatrixInfo> result;
-    int matrixCount = 20;
+    int matrixCount = 10;
     for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
         result.push_back(list[i]);
     }
@@ -2118,8 +2121,8 @@ void test_qr(QR_FUNC f) {
     for (const auto& item : list) {
         int m;
         int n;
-        float *A_in;
-        read_euroc_jacobian(item.filePath, &m, &n, &A_in);
+        float* A_in;
+         read_euroc_jacobian(item.filePath, &m, &n, &A_in);
         f(m, n, 16, A_in);
     }
 }
@@ -2227,7 +2230,7 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops, backward_error, "gpu_block");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "gpu_block");
 
     printf("GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
@@ -2248,10 +2251,10 @@ int main() {
     // test_h_mmult();
     // test_h_mmult_transpose_A();
     // test_h_jhouseholder_qr();
-
+    test_qr(test_dev_block_qr);
     test_qr(test_h_householder_qr);
     // test_qr(test_dev_householder_qr);
-    test_qr(test_dev_block_qr);
+
     // test_qr(test_h_block_qr);
 
 
