@@ -673,6 +673,49 @@ __global__ void shared_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a
     }
 }
 
+__global__ 
+void dev_wy_compute_z(float* dev_z, float* dev_W_Yt, float* dev_A, int m, int n, int global_offset, int W_Yt_dim, int column_offset)
+/*
+* Computes vector z for WY representation on the GPU
+* 
+* z = (Im - W @ Yt) @ w
+* 
+* Where w is the householder vector stored in the lower trapezoidal region of matrix A
+*/
+{
+    // thread mapping to row of z
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    float inner_product = 0;
+
+    if (row < W_Yt_dim) {
+        for (int col = column_offset; col < W_Yt_dim; col++) {
+            inner_product += dev_W_Yt[row * W_Yt_dim + col] *
+                dev_A[(global_offset + col + 1) * n + global_offset + column_offset];
+        }
+        dev_z[row] = 2 * inner_product;
+    }
+}
+
+__global__
+void dev_wy_copy_z_and_w(float* dev_z, float* dev_W, float* dev_Y, float* dev_A, 
+                         int m, int n, int W_Yt_dim, int column_offset, int panel_width, int global_offset) {
+
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (row < W_Yt_dim) {
+        // Copy z
+        dev_W[row * panel_width + column_offset] = dev_z[row];
+        // Copy householder vector w from matrix A
+        if (row < column_offset) {
+            dev_Y[row * panel_width + column_offset] = 0.0;
+        }
+        else {
+            dev_Y[row * panel_width + column_offset] = dev_A[(global_offset + row + 1) * n + global_offset + column_offset];
+        }
+    }
+}
+
 __global__ void shared_mem_mmult_transpose_b(float* c_mtx, float* a_mtx, float* b_mtx,
                                              int a_width, int a_height, int b_width,
                                              int b_layout) {
@@ -1392,72 +1435,42 @@ void h_launch_dev_wy_transform(float* dev_A, float* dev_panel_Q, int m, int n, i
         (W_Yt_dim % VECTOR_OP_1D_BLOCK_WIDTH != 0); // Integer div. rounded up
     dim3 gridDim(grid_dim, 1, 1);
     dim3 blockDim(VECTOR_OP_1D_BLOCK_WIDTH, 1, 1);
+
+    // Grid for matrix-matrix products
+    dim3 mtx_gridDim((int)ceil((float)W_Yt_dim / TILE_WIDTH), (int)ceil((float)W_Yt_dim / TILE_WIDTH), 1);
+    dim3 mtx_blockDim(TILE_WIDTH, TILE_WIDTH, 1);
+
+    // CUDA grid for vector operations
+    dim3 vec_gridDim(1, (int)ceil((float)W_Yt_dim / VECTOR_OP_1D_BLOCK_WIDTH), 1);
+    dim3 vec_blockDim(1, VECTOR_OP_1D_BLOCK_WIDTH, 1);
+
     dev_wy_init << <gridDim, blockDim >> > (dev_A, dev_Y, dev_W, global_offset, n, W_Yt_dim, panel_width);
+    cudaDeviceSynchronize();
 
     // Iterate over columns of panel and update W, Y
     for (int i = 1; i < panel_width; i++) { // cols of panel
-        // Calculate z = 2 * (I_m - WY^T)w_i
         
-        // Im - WY^T
-        for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
-            int row_offset = row * panel_width;
-            for (int col = i; col < W_Yt_dim; col++) { // cols of W_Yt
-                int col_offset = col * panel_width;
-                // compute each inner product
-                float inner_product = 0;
-                for (int idx = 0; idx < i; idx++) { // inner dimension
-                    inner_product += dev_W[row_offset + idx] * dev_Y[col_offset + idx];
-                }
-                if (row == col) { // Im is 1
-                    dev_W_Yt[row * W_Yt_dim + col] = 1 - inner_product; // Im - WY^T
-                }
-                else { // Im is zero
-                    dev_W_Yt[row * W_Yt_dim + col] = -inner_product;
-                }
-            }
-        }
+        /*
+         * Calculate z = 2 * (I_m - WY ^ T)w_i
+         *  for each column in the panel using 3 CUDA kernels
+         */
+
+        // (Im - WY^T)
+        dev_wy_compute_Im_sub_W_Yt<<<mtx_gridDim, mtx_blockDim >>>(dev_W_Yt, dev_W, dev_Y, panel_width, i, W_Yt_dim);
+        cudaDeviceSynchronize();
 
         // 2 * (Im - WY^T)w_i (matrix-vector product)
-        // Flops: (m-global_offset)x(m-global_offset-i)
-        for (int row = 0; row < W_Yt_dim; row++) {
-            float inner_product = 0;
-            for (int col = i; col < W_Yt_dim; col++) {
-                inner_product += dev_W_Yt[row * W_Yt_dim + col] * dev_A[(global_offset + col + 1) * n + 
-                                                                                                   global_offset + i];
-            }
-            dev_z[row] = 2 * inner_product;
-        }
+        dev_wy_compute_z<<<vec_gridDim, vec_blockDim >>>(dev_z, dev_W_Yt, dev_A, m, n, global_offset, W_Yt_dim, i);
+        cudaDeviceSynchronize();
 
-        // Copy z to W
-        // Flops: (m-global_offset)
-        for (int idx = 0; idx < W_Yt_dim; idx++) {
-            if (idx < (i)) {
-                dev_Y[idx * panel_width + i] = 0;
-            }
-            else {
-                dev_Y[idx * panel_width + i] = dev_A[(global_offset + idx + 1) * n + global_offset + i];
-            }
-            dev_W[idx * panel_width + i] = dev_z[idx];
-        }
+        // Copy z & householder vector (w) to W & Y matrices
+        dev_wy_copy_z_and_w << <vec_gridDim, vec_blockDim >> > (dev_z, dev_W, dev_Y, dev_A, m, n, W_Yt_dim, i, panel_width, global_offset);
+        cudaDeviceSynchronize();
     }
 
-    // Im - WY^T (classic "triply-nested-loop")
-    // Flops: (m-global_offset)x(m-global_offset)xpanel_width
-    for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
-        for (int col = 0; col < W_Yt_dim; col++) { // cols of W_Yt
-            // compute each inner product
-            float inner_product = 0;
-            for (int idx = 0; idx < panel_width; idx++) { // cols of W
-                inner_product += dev_W[row * panel_width + idx] * dev_Y[col * panel_width + idx];
-            }
-            if (row == col) { // Im is 1
-                dev_W_Yt[row * W_Yt_dim + col] = 1 - inner_product; // Im - WY^T
-            }
-            else { // Im is zero
-                dev_W_Yt[row * W_Yt_dim + col] = -inner_product;
-            }
-        }
-    }
+    // Im - WY^T
+    dev_wy_compute_Im_sub_W_Yt<<<mtx_gridDim, mtx_blockDim>>>(dev_W_Yt, dev_W, dev_Y, panel_width, panel_width, W_Yt_dim);
+    cudaDeviceSynchronize();
 
     free(dev_W);
     free(dev_Y);
@@ -2225,7 +2238,7 @@ void test_h_wy_transform() {
 
 void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_column) {
     /*
-    * Tests subroutine for WY representation on GPU
+    * Tests subroutine for WY representation on GPU, which computes matrix product W @ transpose(Y)
     */
 
     printf("\nTesting GPU SMEM (Im - W @ Yt) kernel %dx%d...\n", W_Yt_dim, panel_width);
@@ -2311,6 +2324,102 @@ void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_
         printf("Test failed.\n");
     }
 
+    free(W);
+    free(Y);
+    free(dev_result_W_Yt);
+    free(h_result_W_Yt);
+
+    cudaFree(dev_W);
+    cudaFree(dev_Y);
+    cudaFree(dev_WYt);
+
+}
+
+void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
+    /*
+    * Tests GPU kernel for WY representation, which computes matrix-vector product (Im - W @ Yt) @ w, where w is the
+    * householder vector stored in the lower trapezoidal region of A
+    */
+
+    printf("\nTesting WY z computation...\n");
+    printf("Dimensions of A (m, n): (%d, %d)\n", m, n);
+
+    int W_Yt_dim = m - global_offset;
+
+    size_t W_Yt_size = W_Yt_dim * W_Yt_dim * sizeof(float);
+    size_t A_size = (m + 1) * n * sizeof(float);
+    size_t w_size = W_Yt_dim * sizeof(float);
+
+    float* dev_result_z = (float*)malloc(w_size);
+    float* h_result_z = (float*)malloc(w_size);
+    float* h_A_in = (float*)malloc(A_size);
+    float* h_W_Yt = (float*)malloc(W_Yt_size);
+    
+    float* dev_A_in;
+    float* dev_W_Yt;
+    float* dev_z;
+
+    cudaMalloc(&dev_A_in, A_size);
+    cudaMalloc(&dev_W_Yt, W_Yt_size);
+    cudaMalloc(&dev_z, w_size);
+    
+    // initialize matrix A
+    for (int i = 0; i < m + 1; i++) {
+        for (int j = 0; j < n; j++) {
+            h_A_in[i * n + j] = (float)i + 1;
+        }
+    }
+
+    // initialize W_Yt matrix
+    for (int row = 0; row < W_Yt_dim; row++) {
+        for (int col = 0; col < W_Yt_dim; col++) {
+            h_W_Yt[row * W_Yt_dim + col] = (float)col+1;
+        }
+    }
+
+    cudaMemcpy(dev_A_in, h_A_in, A_size, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_W_Yt, h_W_Yt, W_Yt_size, cudaMemcpyHostToDevice);
+
+    dim3 gridDim(1, (int)ceil((float)W_Yt_dim / VECTOR_OP_1D_BLOCK_WIDTH), 1);
+    dim3 blockDim(1, VECTOR_OP_1D_BLOCK_WIDTH, 1);
+    dev_wy_compute_z<<<gridDim, blockDim>>>(dev_z, dev_W_Yt, dev_A_in, m, n, global_offset, W_Yt_dim, column_offset);
+
+    cudaDeviceSynchronize();
+
+    cudaMemcpy(dev_result_z, dev_z, w_size, cudaMemcpyDeviceToHost);
+    
+    // Compute with CPU for comparison
+    for (int row = 0; row < W_Yt_dim; row++) {
+        float inner_product = 0;
+        for (int col = column_offset; col < W_Yt_dim; col++) {
+            inner_product += h_W_Yt[row * W_Yt_dim + col] * h_A_in[(global_offset + col + 1) * n + global_offset + column_offset];
+        }
+        h_result_z[row] = 2 * inner_product;
+    }
+
+    // Compare CPU and GPU result
+    bool pass = true;
+    for (int row = 0; row < W_Yt_dim; row++) {
+        if (h_result_z[row] != dev_result_z[row]) {
+            pass = false;
+        }
+    }
+
+    if (pass) {
+        printf("Test passed.\n");
+    }
+    else {
+        printf("Test failed.\n");
+    }
+
+    free(dev_result_z);
+    free(h_result_z);
+    free(h_A_in);
+    free(h_W_Yt);
+
+    cudaFree(dev_A_in);
+    cudaFree(dev_W_Yt);
+    cudaFree(dev_z);
 }
 
 
@@ -2526,6 +2635,14 @@ int main() {
             for (int current_column = 1; current_column < panel_width; current_column *= 2) {
                 test_dev_wy_compute_Im_sub_W_Yt(rows, panel_width, current_column);
             }
+        }
+    }
+
+    
+
+    for (int m = 10; m < 1000; m *= 2) {
+        for (int n = 2; n < 16; n *= 2) {
+            test_dev_wy_compute_z(m, n, n / 2, 0);
         }
     }
     
