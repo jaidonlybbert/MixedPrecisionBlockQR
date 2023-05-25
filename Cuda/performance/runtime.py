@@ -11,7 +11,7 @@ runtime_gpu =[item[1] for item in sorted(gpu_runtime.items())]
 plt.plot(cpu_runtime.keys(), runtime_cpu,color='g',label='cpu')
 plt.plot(gpu_runtime.keys(), runtime_gpu,color='b',label='gpu')
 plt.xlabel('Matrix rows')
-plt.ylabel('Runtime(ms)')
+plt.ylabel('Runtime(s)')
 plt.legend(loc = "best")
 
 # flops plot
