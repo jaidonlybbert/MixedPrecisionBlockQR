@@ -2601,11 +2601,50 @@ struct QRProblemSize {
     int r; // block QR panel width
 };
 
-# define NUM_STATIC_QR_TESTS 20
+# define NUM_STATIC_QR_TESTS 22
 # define NUM_STATIC_MMULT_TESTS 15
+struct MMULTProblemSize {
+    // C = A @ B problem set dimensions
+    // Dimensions of A: m x k
+    // Dimensions of B: k x n
+    // Dimensions of C: m x n
+    int m;
+    int n;
+    int k;
+};
+
+void test_qr_by_random_matrix(QR_FUNC f) {
+   QRProblemSize testDim[NUM_STATIC_QR_TESTS] = {
+       {6, 4, 2},
+       {6, 4, 1},
+       {6, 4, 3},
+       {12, 8, 4},
+       {12, 8, 5},
+       {12, 8, 6},
+       {12, 8, 2},
+       {12, 8, 8},
+       {12, 8, 3},
+       {24, 16, 8},
+       {24, 16, 12},
+       {60, 40, 8},
+       {60, 40, 16},
+       {80, 80, 16},
+       {97, 90, 16},
+       {100, 80, 16},
+       {128, 80, 16},
+       {129, 80, 16},
+       {240, 160, 16},
+       {600, 400, 16},
+        {1200, 1200, 16},
+       {1800, 1800, 32}
+   };
+    for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
+        float* A_in = h_generate_random_matrix(testDim[i].m, testDim[i].n);
+        f(testDim[i].m, testDim[i].n, testDim[i].r, A_in);
+    }
+}
 
 void test_qr(QR_FUNC f) {
-
     std::vector<MatrixInfo> list = get_jacobians_test_matrixs();
     for (const auto& item : list) {
         int m;
@@ -2616,15 +2655,6 @@ void test_qr(QR_FUNC f) {
     }
 }
 
-struct MMULTProblemSize {
-    // C = A @ B problem set dimensions
-    // Dimensions of A: m x k
-    // Dimensions of B: k x n
-    // Dimensions of C: m x n
-    int m;
-    int n;
-    int k;
-};
 
 void test_mmult(MMULT_FUNC f) {
     QRProblemSize testDim[NUM_STATIC_MMULT_TESTS] = {
