@@ -25,7 +25,6 @@ def readFromLogFile(filename):
 
         runtime = getAverage(data, 2)
         flops = getAverage(data, 3)
-        print(runtime)
-        print(flops)
-        return runtime, flops
+        error = getAverage(data, 4)
+        return runtime, flops, error
 

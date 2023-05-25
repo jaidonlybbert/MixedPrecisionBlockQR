@@ -2215,7 +2215,7 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "cpu_householder");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1e8, "cpu_householder");
 
 
     // write results to log file
@@ -2588,8 +2588,8 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     }
     std::sort(list.begin(), list.end(), compareByRow);
     std::vector<MatrixInfo> result;
-    int matrixCount = 10;
-    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
+    int matrixCount = 30;
+    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 2) {
         result.push_back(list[i]);
     }
     return result;
@@ -2748,7 +2748,7 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "gpu_block");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
 
     printf("GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
@@ -2800,11 +2800,11 @@ int main() {
 
 
 
-    test_qr_by_random_matrix(test_h_householder_qr);
-    test_qr_by_random_matrix(test_dev_block_qr);
+    // test_qr_by_random_matrix(test_h_householder_qr);
+    // test_qr_by_random_matrix(test_dev_block_qr);
 
-    // test_qr(test_h_householder_qr);
-    // test_qr(test_dev_block_qr);
+    test_qr(test_h_householder_qr);
+    test_qr(test_dev_block_qr);
     //test_qr(test_dev_householder_qr);
     //test_qr(test_h_block_qr);
     //test_mmult(test_dev_smem_mmult);
