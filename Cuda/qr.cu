@@ -1674,7 +1674,7 @@ float* h_generate_random_matrix(int height, int width) {
     /*
     * Returns pointer to random float matrix of dimensions HeightxWidth
     */
-    unsigned seed = time(0);
+    unsigned seed = width + height;
     srand(seed);
     float* matrix = (float*)malloc(height * width * sizeof(float));
     for (int row = 0; row < height; row++) {
@@ -2602,7 +2602,7 @@ struct QRProblemSize {
     int r; // block QR panel width
 };
 
-# define NUM_STATIC_QR_TESTS 22
+# define NUM_STATIC_QR_TESTS 24
 # define NUM_STATIC_MMULT_TESTS 15
 struct MMULTProblemSize {
     // C = A @ B problem set dimensions
@@ -2636,8 +2636,10 @@ void test_qr_by_random_matrix(QR_FUNC f) {
        {129, 80, 16},
        {240, 160, 16},
        {600, 400, 16},
+        {900, 900, 16},
         {1200, 1200, 16},
-       {1800, 1800, 32}
+        {1500, 1500, 16},
+        {1800, 1800, 32},
    };
     for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
         float* A_in = h_generate_random_matrix(testDim[i].m, testDim[i].n);
@@ -2651,7 +2653,7 @@ void test_qr(QR_FUNC f) {
         int m;
         int n;
         float* A_in;
-         read_euroc_jacobian(item.filePath, &m, &n, &A_in);
+        read_euroc_jacobian(item.filePath, &m, &n, &A_in);
         f(m, n, 16, A_in);
     }
 }
@@ -2798,11 +2800,13 @@ int main() {
 
 
 
-    test_qr(test_h_householder_qr);
+    test_qr_by_random_matrix(test_h_householder_qr);
+    test_qr_by_random_matrix(test_dev_block_qr);
+
+    // test_qr(test_h_householder_qr);
+    // test_qr(test_dev_block_qr);
     //test_qr(test_dev_householder_qr);
     //test_qr(test_h_block_qr);
-    test_qr(test_dev_block_qr);
-
     //test_mmult(test_dev_smem_mmult);
     //test_mmult_in_place();
     //test_mmult_in_place_transpose_a();
