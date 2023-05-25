@@ -1413,7 +1413,7 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
 
 #define VECTOR_OP_1D_BLOCK_WIDTH 64
 
-void h_launch_dev_wy_transform(float* dev_A, float* dev_panel_Q, int m, int n, int global_offset, int panel_width) {
+void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int global_offset, int panel_width) {
     nvtxRangePush(__func__);
     float* dev_W; 
     float* dev_Y;
@@ -1472,11 +1472,11 @@ void h_launch_dev_wy_transform(float* dev_A, float* dev_panel_Q, int m, int n, i
     dev_wy_compute_Im_sub_W_Yt<<<mtx_gridDim, mtx_blockDim>>>(dev_W_Yt, dev_W, dev_Y, panel_width, panel_width, W_Yt_dim);
     cudaDeviceSynchronize();
 
-    free(dev_W);
-    free(dev_Y);
-    free(dev_z);
+    cudaFree(dev_W);
+    cudaFree(dev_Y);
+    cudaFree(dev_z);
     //free(W_Yt);
-    dev_panel_Q = dev_W_Yt;
+    *dev_panel_Q = dev_W_Yt;
     nvtxRangePop();
 }
 
@@ -1932,8 +1932,27 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
     /*
     * GPU code to compute QR decomposition with Block QR algorithm
     */
+    
+    // Pointers to device data
+    float* dev_A;
+    float* dev_Q;
+    float* dev_panel_Q;
+    float* dev_A_panel_result;
+    float* dev_Q_result;
 
-    float* panel_Q = NULL;
+    // Data sizes
+    size_t size_A = (m + 1) * n * sizeof(float);
+    size_t size_Q = (m * m * sizeof(float));
+
+    // Allocate memory on device
+    cudaMalloc(&dev_A, size_A);
+    cudaMalloc(&dev_Q, size_Q);
+    cudaMalloc(&dev_Q_result, size_Q);
+
+    // Move matrix A and Q (initialized as identity) to device
+    cudaMemcpy(dev_Q, Q, size_Q, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_Q_result, Q, size_Q, cudaMemcpyHostToDevice);
+
     int lambda = 0;
     while (lambda < n) { // panel starts at lambda
         int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
@@ -1942,67 +1961,53 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
         // R is stored in upper triangular portion of dev_A
         h_householder_qr(A, m, n, lambda, tau - lambda);
 
-        // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        //h_wy_transform(A, &panel_Q, m, n, lambda, tau - lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+        cudaMemcpy(dev_A, A, size_A, cudaMemcpyHostToDevice);
 
-        // Update matrix A = Q^T @ A
+        // Allocate memory for A result
+        size_t size_panel_A = (m - lambda) * (n - tau) * sizeof(float);
+        cudaMalloc(&dev_A_panel_result, size_panel_A);
+        
+        // Perform WY transform to construct Q for panel from householder vectors stored in matrix A
+        dev_wy_transform(dev_A, &dev_panel_Q, m, n, lambda, tau - lambda);
+        
+        // Update trailing matrix in place : A = Qt @ A
         float blockWidth = 32.;
         float blockHeight = 32.;
-
-        float* dev_A;
-        float* dev_Q;
-        float* dev_panel_Q;
-        float* dev_A_panel_result;
-        float* dev_Q_result;
-
-        cudaMalloc(&dev_A, m * n * sizeof(float));
-        cudaMalloc(&dev_Q, m * m * sizeof(float));
-        cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
-        cudaMalloc(&dev_A_panel_result, (m - lambda) * (n - tau) * sizeof(float));
-        cudaMalloc(&dev_Q_result, m * m * sizeof(float));
-
-        cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
-        h_launch_dev_wy_transform(dev_A, dev_panel_Q, m, n, lambda, tau - lambda);
-        cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(dev_Q_result, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
-
         dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
-
-        // Updates trailing matrix in place : A = Qt @ A
         shared_mem_mmult_in_place_transpose_a << <GridDim, BlockDim >> > (dev_A_panel_result, dev_panel_Q, dev_A,
             (m - lambda), (n - tau), (m - lambda), m, n);
-
         cudaDeviceSynchronize();
 
+        // Copy panel A result to matrix A
         dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
         dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
         dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
             (m - lambda), (n - tau), BOTTOM_RIGHT);
-
         cudaDeviceSynchronize();
 
+        // Update Q matrix with panel Q
         dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
         dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> > (dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
-
         cudaDeviceSynchronize();
 
-        cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(Q, dev_Q_result, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+        // Overwrite Q with result
+        cudaMemcpy(dev_Q, dev_Q_result, size_Q, cudaMemcpyDeviceToDevice);
 
-        cudaFree(dev_A);
-        cudaFree(dev_Q);
         cudaFree(dev_panel_Q);
         cudaFree(dev_A_panel_result);
-        cudaFree(dev_Q_result);
-
-        free(panel_Q);
+        cudaMemcpy(A, dev_A, size_A, cudaMemcpyDeviceToHost);
 
         // increment panel offset
         lambda = tau;
     }
+
+    cudaMemcpy(Q, dev_Q, size_Q, cudaMemcpyDeviceToHost);
+
+    cudaFree(dev_A);
+    cudaFree(dev_Q);
+    cudaFree(dev_Q_result);
 }
 
 
@@ -2422,6 +2427,67 @@ void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
     cudaFree(dev_z);
 }
 
+void test_dev_wy_transform(int m, int n, int panel_width, int global_offset) {
+    /*
+    * Test GPU wy transform against CPU version
+    */
+    printf("\nTesting GPU WY transform...\n");
+    printf("Dimensions (m, n, panel_width, global_offset): (%d,%d,%d,%d)\n", m, n, panel_width, global_offset);
+
+    size_t A_size = (m+1) * n * sizeof(float);
+    size_t panel_Q_size = (m-global_offset) * (m-global_offset) * sizeof(float);
+
+    float* h_A = (float*)malloc(A_size);
+    float* h_result_panel_Q = (float*)malloc(panel_Q_size);
+    float* h_dev_result_panel_Q = (float*)malloc(panel_Q_size);
+
+    unsigned seed = time(0);
+    srand(seed);
+    // initialize matrix A
+    for (int row = 0; row < m + 1; row++) {
+        for (int col = 0; col < n; col++) {
+            h_A[row * n + col] = ((float)rand() / (RAND_MAX));
+        }
+    }
+
+    float* dev_A;
+    float* dev_panel_Q;
+
+    cudaMalloc(&dev_A, A_size);
+    cudaMemcpy(dev_A, h_A, A_size, cudaMemcpyHostToDevice);
+
+    dev_wy_transform(dev_A, &dev_panel_Q, m, n, global_offset, panel_width);
+
+    cudaMemcpy(h_dev_result_panel_Q, dev_panel_Q, panel_Q_size, cudaMemcpyDeviceToHost);
+
+    h_wy_transform(h_A, &h_result_panel_Q, m, n, global_offset, panel_width);
+
+
+    bool pass = true;
+    for (int row = 0; row < m-global_offset; row++) {
+        for (int col = 0; col < m-global_offset; col++) {
+            if (h_dev_result_panel_Q[row * (m-global_offset) + col] != 
+                                    h_result_panel_Q[row * (m-global_offset) + col]) {
+                pass = false;
+            }
+        }
+    }
+
+    if (pass) {
+        printf("Test passed.\n");
+    }
+    else {
+        printf("Test failed.\n");
+    }
+
+    free(h_A);
+    free(h_result_panel_Q);
+    free(h_dev_result_panel_Q);
+
+    cudaFree(dev_A);
+    cudaFree(dev_panel_Q);
+}
+
 
 void test_h_block_qr(int m, int n, int r) {
     /*
@@ -2594,8 +2660,8 @@ void test_dev_block_qr(int m, int n, int r) {
     h_matrix_cpy((float*)A_in, A_out2, m, n);
 
     clock_t cycles = clock(); // Time how long the QR function takes to execute
-    h_block_qr((float*)A_out2, Q2, m, n, r);
-    //dev_block_qr_wy(A_out2, Q2, m, n, r);
+    //dev_block_qr((float*)A_out, Q1, m, n, r);
+    dev_block_qr_wy(A_out2, Q2, m, n, r);
     cycles = clock() - cycles;
 
     float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
@@ -2638,13 +2704,30 @@ int main() {
         }
     }
 
-    
-
     for (int m = 10; m < 1000; m *= 2) {
         for (int n = 2; n < 16; n *= 2) {
             test_dev_wy_compute_z(m, n, n / 2, 0);
         }
     }
+
+    for (int m = 40; m < 2000; m *= 2) {
+        for (int n = m / 4; n < m; n *= 2) {
+            for (int global_offset = n / 4; global_offset < n; global_offset *= 2) {
+                int panel_width;
+                if (n-global_offset < 16) {
+                    panel_width = n-global_offset;
+                }
+                else if (m < 500) {
+                    panel_width = 16;
+                }
+                else {
+                    panel_width = 8;
+                }
+                test_dev_wy_transform(m, n, panel_width, global_offset);
+            }
+        }
+    }
+    
     
 
     //test_qr(test_h_householder_qr);
