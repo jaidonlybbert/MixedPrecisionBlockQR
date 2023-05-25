@@ -22,7 +22,7 @@ SOFTWARE.
 
 /*
 * CUDA implementation of the Block QR decomposition algorithm
-* 
+*
 * Conventions:
 *   Functions prefixed by "h_" sequentially execute on the CPU (host)
 *   Functions prefixed by "dev_" execute in parallel on the GPU (device)
@@ -44,6 +44,11 @@ SOFTWARE.
 #include <assert.h>
 #include <cstdlib>
 #include <vector>
+#include <chrono>
+#include <dirent.h>
+#include <iomanip>
+#include <sstream>
+#include <algorithm>
 
 #define TC_TILE_M 16
 #define TC_TILE_N 16
@@ -71,13 +76,20 @@ SOFTWARE.
 #define COLUMN_MAJOR 0
 #define ROW_MAJOR 1
 
-typedef void QR_FUNC(int, int, int);
+typedef void QR_FUNC(int, int, int, float*);
 typedef void MMULT_FUNC(int, int, int);
 
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error, std::string file_name = "logFile") {
     //write arguments to log file
-    std::vector<double> params = { width * 1.0, height * 1.0, time_ms, flops_per_second, backward_error };
-    std::string line;
+    std::vector<double> params = { height * 1.0, width * 1.0, time_ms, flops_per_second, backward_error };
+    std::string path = "log/" + file_name + ".txt";
+    std::ifstream file(path);
+    std::string line = "";
+
+    if (!file.good()) {
+        line += "rows,cols,runtime,flops,error\n";
+    }
+
     for (int i = 0; i < params.size(); i++)
     {
         line += std::to_string(params[i]);
@@ -89,7 +101,7 @@ void h_write_results_to_log(int height, int width, float time_ms, float flops_pe
 
 
     std::ofstream logFile;
-    logFile.open("log/" + file_name + ".txt", std::ios::app);
+    logFile.open(path, std::ios::app);
     logFile << line;
     logFile.close();
 }
@@ -334,6 +346,9 @@ void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width
         for (int i = 0; i < len; i++) {
             mag += u[i] * u[i];
         }
+        if (mag == 0) {
+            continue;
+        }
         mag = sqrtf(mag);
 
         // Compute householder normal vector w_k
@@ -389,7 +404,7 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
     /*
     * "Backward accumulation" of Q from householder vectors stored in lower trapezoidal region
     *   of A, after householder QR
-    * 
+    *
     * Reference:
     *   Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins
     *   University Press. Pg. 238. Algorithm 5.1.5
@@ -673,13 +688,13 @@ __global__ void shared_mem_mmult(float* c_mtx, float* a_mtx, float* b_mtx, int a
     }
 }
 
-__global__ 
+__global__
 void dev_wy_compute_z(float* dev_z, float* dev_W_Yt, float* dev_A, int m, int n, int global_offset, int W_Yt_dim, int column_offset)
 /*
 * Computes vector z for WY representation on the GPU
-* 
+*
 * z = (Im - W @ Yt) @ w
-* 
+*
 * Where w is the householder vector stored in the lower trapezoidal region of matrix A
 */
 {
@@ -698,7 +713,7 @@ void dev_wy_compute_z(float* dev_z, float* dev_W_Yt, float* dev_A, int m, int n,
 }
 
 __global__
-void dev_wy_copy_z_and_w(float* dev_z, float* dev_W, float* dev_Y, float* dev_A, 
+void dev_wy_copy_z_and_w(float* dev_z, float* dev_W, float* dev_Y, float* dev_A,
                          int m, int n, int W_Yt_dim, int column_offset, int panel_width, int global_offset) {
 
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -754,7 +769,7 @@ __global__ void shared_mem_mmult_transpose_b(float* c_mtx, float* a_mtx, float* 
     }
 }
 
-__global__ 
+__global__
 void shared_mem_mmult_in_place(float* c_mtx, float* a_mtx, float* b_mtx, int m, int n, int k, int b_height, int b_width)
 /*
 * Computes result c matrix from the matrix multiplication C = AB using shared memory with CUDA
@@ -810,7 +825,7 @@ __global__
 void shared_mem_mmult_in_place_transpose_a(float* c_mtx, float* a_mtx, float* b_mtx, int m, int n, int k, int b_height, int b_width)
 /*
 * Computes result c matrix from the matrix multiplication C = AB using shared memory
-* 
+*
 * assumed m = k
 *
 * Dimensions:
@@ -866,7 +881,7 @@ void dev_tensorcore_mmult_1_warp(float* c_mtx, half* a_mtx, half* b_mtx) {
     unsigned int by = blockIdx.y;
 
     using namespace nvcuda;
-    // Create fragments 
+    // Create fragments
     wmma::fragment<wmma::matrix_a, TC_TILE_M, TC_TILE_N, TC_TILE_K, half, wmma::row_major> Amat;
     wmma::fragment<wmma::matrix_b, TC_TILE_M, TC_TILE_N, TC_TILE_K, half, wmma::row_major> Bmat;
     wmma::fragment<wmma::accumulator, TC_TILE_M, TC_TILE_N, TC_TILE_K, float, void> Cmat;
@@ -890,7 +905,7 @@ __global__
 void dev_tensorcore_mmult_tiled(T_C* c_mtx, T_A* a_mtx, T_B* b_mtx, int m, int n, int k) {
     /*
     * Tiled matrix multiply using warp matrix multiply-accumulate (wmma)
-    * 
+    *
     * The output matrix is divided into tiles (M-N-K), where each warp is responsible for computing one output tile
     */
 
@@ -1133,7 +1148,7 @@ void test_dev_smem_mmult(int m, int n, int k) {
 
 void test_dev_smem_mmult_in_place(int m, int n, int k, int b_width, int b_height) {
     /*
-    * Computes C = A @ B', where b' (mxk) is stored in the "bottom-right" submatrix of a larger matrix B 
+    * Computes C = A @ B', where b' (mxk) is stored in the "bottom-right" submatrix of a larger matrix B
     * (b_height x b_width)
     */
     printf("\nTesting GPU SMEM tiled mmult (in-place) %dx%dx%d...\n", m, n, k);
@@ -1287,7 +1302,7 @@ template <typename T_A, typename T_B, typename T_C>
 void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int m, int n, int k) {
     /*
     * Performs tiled matrix multiply C = A@B with TensorCore
-    * 
+    *
     * Dimensions of A: mxk
     * Dimensions of B: kxn
     * Dimensions of C: mxn
@@ -1333,9 +1348,9 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
     int warp_grid_width = n / TC_TILE_N + (n % TC_TILE_N != 0);
 
     // Configure grid of thread blocks
-    int grid_height = warp_grid_height / TC_MMULT_THREAD_BLOCK_HEIGHT + 
+    int grid_height = warp_grid_height / TC_MMULT_THREAD_BLOCK_HEIGHT +
                       (warp_grid_height % TC_MMULT_THREAD_BLOCK_HEIGHT != 0); // Integer div. rounded up
-    int grid_width = warp_grid_width * WARP_SIZE / TC_MMULT_THREAD_BLOCK_WIDTH + 
+    int grid_width = warp_grid_width * WARP_SIZE / TC_MMULT_THREAD_BLOCK_WIDTH +
                      (warp_grid_width % TC_MMULT_THREAD_BLOCK_WIDTH != 0);
 
     // Configure grid
@@ -1367,7 +1382,7 @@ void dev_wy_init(float* dev_A, float* dev_Y, float* dev_W, int global_offset, in
 }
 
 __global__
-void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y, 
+void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
                                 int panel_width, int column_idx, int W_Yt_dim) {
     // row and column of C result
     int row = blockIdx.y * blockDim.y + threadIdx.y;
@@ -1406,7 +1421,7 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
         else {
             dev_W_Yt[row * W_Yt_dim + col] = -pval;
         }
-        
+
     }
 
 }
@@ -1415,7 +1430,7 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
 
 void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int global_offset, int panel_width) {
     nvtxRangePush(__func__);
-    float* dev_W; 
+    float* dev_W;
     float* dev_Y;
     float* dev_z;
     float* dev_W_Yt;
@@ -1449,7 +1464,7 @@ void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int globa
 
     // Iterate over columns of panel and update W, Y
     for (int i = 1; i < panel_width; i++) { // cols of panel
-        
+
         /*
          * Calculate z = 2 * (I_m - WY ^ T)w_i
          *  for each column in the panel using 3 CUDA kernels
@@ -1483,7 +1498,7 @@ void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int globa
 void test_template_tensorcore_mmult_tiled() {
     printf("\nTesting template tensorcore tiled mmult 33x33x33...\n");
 
-    
+
     int m = 33;
     int n = 33;
     int k = 33;
@@ -1565,13 +1580,13 @@ void test_tensorcore_mmult_tiled() {
 }
 
 
-__global__ 
+__global__
 void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
     /*
     * Computes the QR decomposition of A using Householder reflectors.
-    * 
-    * Reference: 
-    *   Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins 
+    *
+    * Reference:
+    *   Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins
     *   University Press. Pg. 249. Algorithm 5.2.1
     */
 
@@ -1634,7 +1649,7 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
             }
             temp[col-k] = inner_product;
         }
-        
+
         // (A_k:m,k:n) - 2 * (V)(V^T)(A_k:m,k:n)
         float* temp2 = (float*)malloc((n - k) * (m - k) * sizeof(float));
         for (int row = k; row < m; row++) { // TASK7 1 shashank: implement parallel algorithm in CUDA to replace for loop
@@ -1671,7 +1686,7 @@ float* h_generate_random_matrix(int height, int width) {
     return matrix;
 }
 
-void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** matrix) {
+void read_euroc_jacobian(std::string filename, int* rows, int* cols, float** matrix) {
     /*
     * Reads text file containing jacobian matrices from the Euroc dataset, and returns pointer to matrix
     */
@@ -1691,27 +1706,27 @@ void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** m
     // Read first line to get dimensions
     getline(fin, line);
 
-    std::cout << line << std::endl;
+//     std::cout << line << std::endl;
     int start = line.find(" ");
     int end = line.find(" ");
 
     std::string rows_str = line.substr(0, start);
     std::string cols_str = line.substr(start + 1, end);
 
-    std::cout << rows_str << std::endl;
-    std::cout << cols_str << std::endl;
+//     std::cout << rows_str << std::endl;
+//     std::cout << cols_str << std::endl;
 
     *cols = std::stoi(cols_str);
     *rows = std::stoi(rows_str);
 
-    printf("Rows: %d\nCols: %d\n", *rows, *cols);
+//     printf("Rows: %d\nCols: %d\n", *rows, *cols);
 
     // Allocate memory for matrix
-    *matrix = (double*)malloc((*rows) * (*cols) * sizeof(double));
+    *matrix = (float*)malloc((*rows) * (*cols) * sizeof(float));
 
     for (int row = 0; row < (*rows); row++) {
         for (int col = 0; col < (*cols); col++) {
-            (*matrix)[row * (*cols) + col] = (double)0.0;
+            (*matrix)[row * (*cols) + col] = (float)0.0;
         }
     }
 
@@ -1750,7 +1765,7 @@ void read_euroc_jacobian(const char filename[], int* rows, int* cols, double** m
         linecount++;
     }
 
-    printf("Total linecount: %d\n", linecount);
+//     printf("Total linecount: %d\n", linecount);
 }
 
 
@@ -1775,13 +1790,13 @@ void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, float* res_A, int m, in
     int panel_q_dim = (m - lambda); // panel_q is square matrix, shrinks for subsequent panels
 
     // Number of phases determined from block width
-    int phases = panel_q_dim % GMEM_MMULT_TILE_WIDTH == 0 ? 
+    int phases = panel_q_dim % GMEM_MMULT_TILE_WIDTH == 0 ?
         panel_q_dim / GMEM_MMULT_TILE_WIDTH : panel_q_dim / GMEM_MMULT_TILE_WIDTH + 1;
-    
+
     // Traverse phases and perform matrix-multiply accumulate into inner_product for each thread
 
     // check thread maps to output matrix
-    bool valid_row = (row >= lambda && row < m); 
+    bool valid_row = (row >= lambda && row < m);
     bool valid_col = (col >= tau && col < n);
 
     // panel_Q[(inner_dim) * (m - lambda) + (row - lambda)] * A_old[(inner_dim + lambda) * n + col];
@@ -1815,10 +1830,10 @@ void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, float* res_A, int m, in
         __syncthreads();
     }
 
-    
+
 }
 
-__global__ 
+__global__
 void dev_apply_qt_to_a_tensorcore_gmem(half* dev_A, half* dev_panel_Q, int m, int n, int tau, int lambda) {
 
 }
@@ -1894,14 +1909,14 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
 
         // Updates trailing matrix in place : A = Qt @ A
-        shared_mem_mmult_in_place_transpose_a<<<GridDim, BlockDim>>>(dev_A_panel_result, dev_panel_Q, dev_A, 
+        shared_mem_mmult_in_place_transpose_a<<<GridDim, BlockDim>>>(dev_A_panel_result, dev_panel_Q, dev_A,
                                                         (m - lambda), (n - tau), (m - lambda), m, n);
 
         cudaDeviceSynchronize();
 
         dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
         dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
-        dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n, 
+        dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
                                                                   (m - lambda), (n - tau), BOTTOM_RIGHT);
 
         cudaDeviceSynchronize();
@@ -1914,7 +1929,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
 
         cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
         cudaMemcpy(Q, dev_Q_result, m * m * sizeof(float), cudaMemcpyDeviceToHost);
-        
+
         cudaFree(dev_A);
         cudaFree(dev_Q);
         cudaFree(dev_panel_Q);
@@ -1932,7 +1947,7 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
     /*
     * GPU code to compute QR decomposition with Block QR algorithm
     */
-    
+
     // Pointers to device data
     float* dev_A;
     float* dev_Q;
@@ -1966,10 +1981,10 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
         // Allocate memory for A result
         size_t size_panel_A = (m - lambda) * (n - tau) * sizeof(float);
         cudaMalloc(&dev_A_panel_result, size_panel_A);
-        
+
         // Perform WY transform to construct Q for panel from householder vectors stored in matrix A
         dev_wy_transform(dev_A, &dev_panel_Q, m, n, lambda, tau - lambda);
-        
+
         // Update trailing matrix in place : A = Qt @ A
         float blockWidth = 32.;
         float blockHeight = 32.;
@@ -2091,7 +2106,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
         free(A_old);
 
         // Update global Q
-        float* Q_old = (float*)malloc(m * m * sizeof(float)); 
+        float* Q_old = (float*)malloc(m * m * sizeof(float));
         memcpy(Q_old, Q, m * m * sizeof(float));
         for (int row = 0; row < m; row++) {
             for (int col = lambda; col < m; col++) {
@@ -2156,7 +2171,7 @@ void test_h_mmult_transpose_A() {
     }
 }
 
-void test_h_householder_qr(int m, int n, int r) {
+void test_h_householder_qr(int m, int n, int r, float* A_in) {
     /*
     * Test host version of householder QR
     */
@@ -2166,7 +2181,6 @@ void test_h_householder_qr(int m, int n, int r) {
 
     printf("Dimensions of A: %dx%d\n", m, n);
 
-    float* A_in = h_generate_random_matrix(m, n);
 
     int global_offset = 0;
 
@@ -2175,13 +2189,16 @@ void test_h_householder_qr(int m, int n, int r) {
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
-    
+
 
     //h_block_qr((float*)A, Q, m, n, r);
-    clock_t cycles = clock();
+    auto start_time = std::chrono::high_resolution_clock::now();
     h_householder_qr(A_out, m, n, 0, n);
-    cycles = clock() - cycles;
-    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+    end_time - start_time;
+    float time_ms = elapsed_time.count();
+
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
     h_q_backward_accumulation(A_out, &Q, m, n);
@@ -2197,7 +2214,7 @@ void test_h_householder_qr(int m, int n, int r) {
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
-    h_write_results_to_log(m, n, 0, 0, backward_error, "cpu_householder");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "cpu_householder");
 
 
     // write results to log file
@@ -2359,7 +2376,7 @@ void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
     float* h_result_z = (float*)malloc(w_size);
     float* h_A_in = (float*)malloc(A_size);
     float* h_W_Yt = (float*)malloc(W_Yt_size);
-    
+
     float* dev_A_in;
     float* dev_W_Yt;
     float* dev_z;
@@ -2367,7 +2384,7 @@ void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
     cudaMalloc(&dev_A_in, A_size);
     cudaMalloc(&dev_W_Yt, W_Yt_size);
     cudaMalloc(&dev_z, w_size);
-    
+
     // initialize matrix A
     for (int i = 0; i < m + 1; i++) {
         for (int j = 0; j < n; j++) {
@@ -2392,7 +2409,7 @@ void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
     cudaDeviceSynchronize();
 
     cudaMemcpy(dev_result_z, dev_z, w_size, cudaMemcpyDeviceToHost);
-    
+
     // Compute with CPU for comparison
     for (int row = 0; row < W_Yt_dim; row++) {
         float inner_product = 0;
@@ -2466,7 +2483,7 @@ void test_dev_wy_transform(int m, int n, int panel_width, int global_offset) {
     bool pass = true;
     for (int row = 0; row < m-global_offset; row++) {
         for (int col = 0; col < m-global_offset; col++) {
-            if (h_dev_result_panel_Q[row * (m-global_offset) + col] != 
+            if (h_dev_result_panel_Q[row * (m-global_offset) + col] !=
                                     h_result_panel_Q[row * (m-global_offset) + col]) {
                 pass = false;
             }
@@ -2530,6 +2547,53 @@ void test_h_block_qr(int m, int n, int r) {
     free(A_out);
 }
 
+struct MatrixInfo {
+    std::string filePath;
+    int m;
+    int n;
+};
+bool compareByRow(const MatrixInfo& item1, const MatrixInfo& item2) {
+    return item1.m < item2.m;
+}
+std::vector<MatrixInfo> get_jacobians_test_matrixs() {
+    std::string folderPath = "./jacobians";
+    std::vector<MatrixInfo> list;
+    for (int i = 100; i <= 22500; i += 100) {
+        std::ostringstream oss;
+        oss << "A_" << std::setfill('0') << std::setw(9) << i << ".txt";
+        std::string filename = oss.str();
+        std::string filePath = folderPath + "/" + filename;
+
+        std::ifstream file(filePath);
+
+        if (file.is_open()) {
+            std::string line;
+            std::getline(file, line);
+            std::istringstream iss(line);
+            int m, n;
+            iss >> m >> n;
+            MatrixInfo info;
+            info.filePath = filePath;
+            info.m = m;
+            info.n = n;
+            list.push_back(info);
+            //read file conten if needed
+            // while (std::getline(file, line)) {
+            // }
+            file.close();
+        } else {
+            std::cout << "can not open file:" << filePath << std::endl;
+        }
+    }
+    std::sort(list.begin(), list.end(), compareByRow);
+    std::vector<MatrixInfo> result;
+    int matrixCount = 10;
+    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
+        result.push_back(list[i]);
+    }
+    return result;
+}
+
 struct QRProblemSize {
     // A = QR problem set dimensions
     int m; // height of matrix A
@@ -2542,32 +2606,13 @@ struct QRProblemSize {
 
 void test_qr(QR_FUNC f) {
 
-    QRProblemSize testDim[NUM_STATIC_QR_TESTS] = {
-        {6, 4, 2},
-        {6, 4, 1},
-        {6, 4, 3},
-        {12, 8, 4},
-        {12, 8, 5},
-        {12, 8, 6},
-        {12, 8, 2},
-        {12, 8, 8},
-        {12, 8, 3},
-        {24, 16, 8},
-        {24, 16, 12},
-        {60, 40, 8},
-        {60, 40, 16},
-        {80, 80, 16},
-        {97, 90, 16},
-        {100, 80, 16},
-        {128, 80, 16},
-        {129, 80, 16},
-        {240, 160, 16},
-        {600, 400, 16},
-        // {1800, 1800, 32}
-    };
-
-    for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
-        f(testDim[i].m, testDim[i].n, testDim[i].r);
+    std::vector<MatrixInfo> list = get_jacobians_test_matrixs();
+    for (const auto& item : list) {
+        int m;
+        int n;
+        float* A_in;
+         read_euroc_jacobian(item.filePath, &m, &n, &A_in);
+        f(m, n, 16, A_in);
     }
 }
 
@@ -2637,7 +2682,7 @@ void test_mmult_in_place_transpose_a() {
     }
 }
 
-void test_dev_block_qr(int m, int n, int r) {
+void test_dev_block_qr(int m, int n, int r, float * A_in) {
     /*
     * Test GPU version of block QR
     */
@@ -2645,7 +2690,6 @@ void test_dev_block_qr(int m, int n, int r) {
     printf("\nTesting GPU block QR...\n");
     printf("Dimensions of A (m, n, r): (%d, %d, %d)\n", m, n, r);
 
-    float* A_in = h_generate_random_matrix(m, n);
 
     float* Q1 = (float*)malloc(m * m * sizeof(float));
     float* Q2 = (float*)malloc(m * m * sizeof(float));
@@ -2675,13 +2719,13 @@ void test_dev_block_qr(int m, int n, int r) {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops, backward_error, "gpu_block");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "gpu_block");
 
     printf("GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("GPU Block QR finished in %.2f ms...\n", time_ms);
    // printf("||A - QR||/||A|| = %e\n", backward_error);
-    
+
     free(Q1);
     free(Q2);
     free(R);
@@ -2693,44 +2737,44 @@ void test_dev_block_qr(int m, int n, int r) {
 
 
 int main() {
-    test_h_mmult();
-    test_h_mmult_transpose_A();
+//     test_h_mmult();
+//     test_h_mmult_transpose_A();
+//
+//     for (int rows = 10; rows < 1000; rows *= 2) {
+//         for (int panel_width = 2; panel_width < 16; panel_width *= 2) {
+//             for (int current_column = 1; current_column < panel_width; current_column *= 2) {
+//                 test_dev_wy_compute_Im_sub_W_Yt(rows, panel_width, current_column);
+//             }
+//         }
+//     }
+//
+//     for (int m = 10; m < 1000; m *= 2) {
+//         for (int n = 2; n < 16; n *= 2) {
+//             test_dev_wy_compute_z(m, n, n / 2, 0);
+//         }
+//     }
+//
+//     for (int m = 40; m < 2000; m *= 2) {
+//         for (int n = m / 4; n < m; n *= 2) {
+//             for (int global_offset = n / 4; global_offset < n; global_offset *= 2) {
+//                 int panel_width;
+//                 if (n-global_offset < 16) {
+//                     panel_width = n-global_offset;
+//                 }
+//                 else if (m < 500) {
+//                     panel_width = 16;
+//                 }
+//                 else {
+//                     panel_width = 8;
+//                 }
+//                 test_dev_wy_transform(m, n, panel_width, global_offset);
+//             }
+//         }
+//     }
 
-    for (int rows = 10; rows < 1000; rows *= 2) {
-        for (int panel_width = 2; panel_width < 16; panel_width *= 2) {
-            for (int current_column = 1; current_column < panel_width; current_column *= 2) {
-                test_dev_wy_compute_Im_sub_W_Yt(rows, panel_width, current_column);
-            }
-        }
-    }
 
-    for (int m = 10; m < 1000; m *= 2) {
-        for (int n = 2; n < 16; n *= 2) {
-            test_dev_wy_compute_z(m, n, n / 2, 0);
-        }
-    }
 
-    for (int m = 40; m < 2000; m *= 2) {
-        for (int n = m / 4; n < m; n *= 2) {
-            for (int global_offset = n / 4; global_offset < n; global_offset *= 2) {
-                int panel_width;
-                if (n-global_offset < 16) {
-                    panel_width = n-global_offset;
-                }
-                else if (m < 500) {
-                    panel_width = 16;
-                }
-                else {
-                    panel_width = 8;
-                }
-                test_dev_wy_transform(m, n, panel_width, global_offset);
-            }
-        }
-    }
-    
-    
-
-    //test_qr(test_h_householder_qr);
+    test_qr(test_h_householder_qr);
     //test_qr(test_dev_householder_qr);
     //test_qr(test_h_block_qr);
     test_qr(test_dev_block_qr);
@@ -2754,6 +2798,6 @@ int main() {
     //test_dev_smem_mmult(6000, 4000, 6000);
     //test_tensorcore_mmult_gmem();
     //test_tensorcore_mmult_tiled();
-    test_template_tensorcore_mmult_tiled();
+//     test_template_tensorcore_mmult_tiled();
     //test_dev_block_qr_tensorcore_gmem();
 }
