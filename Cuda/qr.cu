@@ -2194,6 +2194,7 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     //h_block_qr((float*)A, Q, m, n, r);
     auto start_time = std::chrono::high_resolution_clock::now();
     h_householder_qr(A_out, m, n, 0, n);
+    h_q_backward_accumulation(A_out, &Q, m, n);
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> elapsed_time =
     end_time - start_time;
@@ -2690,32 +2691,28 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     printf("\nTesting GPU block QR...\n");
     printf("Dimensions of A (m, n, r): (%d, %d, %d)\n", m, n, r);
 
-
-    float* Q1 = (float*)malloc(m * m * sizeof(float));
-    float* Q2 = (float*)malloc(m * m * sizeof(float));
+    float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
-    float* A_out2 = (float*)malloc((m + 1) * n * sizeof(float));
 
-    h_identity_mtx(Q1, m, m);
-    h_identity_mtx(Q2, m, m);
+    h_identity_mtx(Q, m, m);
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
-    h_matrix_cpy((float*)A_in, A_out2, m, n);
 
-    clock_t cycles = clock(); // Time how long the QR function takes to execute
+    auto start_time = std::chrono::high_resolution_clock::now(); // Time how long the QR function takes to execute
     //dev_block_qr((float*)A_out, Q1, m, n, r);
-    dev_block_qr_wy(A_out2, Q2, m, n, r);
-    cycles = clock() - cycles;
-
-    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    dev_block_qr_wy(A_out, Q, m, n, r);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+        end_time - start_time;
+    float time_ms = elapsed_time.count();
 
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
-    h_strip_R_from_A((float*)A_out2, R, m, n);
+    h_strip_R_from_A((float*)A_out, R, m, n);
 
-    float backward_error = h_backward_error((float*)A_in, R, Q2, m, n);
-    float error2 = h_error_2(Q2, m);
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+    float error2 = h_error_2(Q, m);
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
@@ -2724,13 +2721,10 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     printf("GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("GPU Block QR finished in %.2f ms...\n", time_ms);
-   // printf("||A - QR||/||A|| = %e\n", backward_error);
 
-    free(Q1);
-    free(Q2);
+    free(Q);
     free(R);
     free(A_out);
-    free(A_out2);
     free(A_in);
 }
 
@@ -2778,17 +2772,6 @@ int main() {
     //test_qr(test_dev_householder_qr);
     //test_qr(test_h_block_qr);
     test_qr(test_dev_block_qr);
-
-    // Tasks remaining:
-    // 0) Optimize or replace WY transform
-    // 1) Load test matrices
-    //  - can use "read_euroc_jacobian()" function
-    // 2) Iterate over all matrices and generate logfiles
-    //  - Sequential Block QR
-    //  - GPU Block QR
-    // 3) Plot results
-    // 4) Standards & Ethics
-    // 5) Poster
 
     //test_mmult(test_dev_smem_mmult);
     //test_mmult_in_place();
