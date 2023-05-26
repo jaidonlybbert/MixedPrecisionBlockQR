@@ -2228,7 +2228,7 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "cpu_householder");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1e8, "cpu_householder");
 
 
     // write results to log file
@@ -2601,8 +2601,8 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     }
     std::sort(list.begin(), list.end(), compareByRow);
     std::vector<MatrixInfo> result;
-    int matrixCount = 10;
-    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 5) {
+    int matrixCount = 30;
+    for (int i =0;i < list.size() && result.size() < matrixCount;i+= 2) {
         result.push_back(list[i]);
     }
     return result;
@@ -2615,21 +2615,8 @@ struct QRProblemSize {
     int r; // block QR panel width
 };
 
-# define NUM_STATIC_QR_TESTS 20
+# define NUM_STATIC_QR_TESTS 24
 # define NUM_STATIC_MMULT_TESTS 15
-
-void test_qr(QR_FUNC f) {
-
-    std::vector<MatrixInfo> list = get_jacobians_test_matrixs();
-    for (const auto& item : list) {
-        int m;
-        int n;
-        float* A_in;
-         read_euroc_jacobian(item.filePath, &m, &n, &A_in);
-        f(m, n, 16, A_in);
-    }
-}
-
 struct MMULTProblemSize {
     // C = A @ B problem set dimensions
     // Dimensions of A: m x k
@@ -2639,6 +2626,51 @@ struct MMULTProblemSize {
     int n;
     int k;
 };
+
+void test_qr_by_random_matrix(QR_FUNC f) {
+   QRProblemSize testDim[NUM_STATIC_QR_TESTS] = {
+       {6, 4, 2},
+       {6, 4, 1},
+       {6, 4, 3},
+       {12, 8, 4},
+       {12, 8, 5},
+       {12, 8, 6},
+       {12, 8, 2},
+       {12, 8, 8},
+       {12, 8, 3},
+       {24, 16, 8},
+       {24, 16, 12},
+       {60, 40, 8},
+       {60, 40, 16},
+       {80, 80, 16},
+       {97, 90, 16},
+       {100, 80, 16},
+       {128, 80, 16},
+       {129, 80, 16},
+       {240, 160, 16},
+       {600, 400, 16},
+        {900, 900, 16},
+        {1200, 1200, 16},
+        {1500, 1500, 16},
+        {1800, 1800, 32},
+   };
+    for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
+        float* A_in = h_generate_random_matrix(testDim[i].m, testDim[i].n);
+        f(testDim[i].m, testDim[i].n, testDim[i].r, A_in);
+    }
+}
+
+void test_qr(QR_FUNC f) {
+    std::vector<MatrixInfo> list = get_jacobians_test_matrixs();
+    for (const auto& item : list) {
+        int m;
+        int n;
+        float* A_in;
+        read_euroc_jacobian(item.filePath, &m, &n, &A_in);
+        f(m, n, 16, A_in);
+    }
+}
+
 
 void test_mmult(MMULT_FUNC f) {
     QRProblemSize testDim[NUM_STATIC_MMULT_TESTS] = {
@@ -2729,7 +2761,7 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     float error3 = h_error_3(R, m, n);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error, "gpu_block");
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
 
     printf("GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
@@ -2781,11 +2813,13 @@ int main() {
 
 
 
+    // test_qr_by_random_matrix(test_h_householder_qr);
+    // test_qr_by_random_matrix(test_dev_block_qr);
+
     test_qr(test_h_householder_qr);
+    test_qr(test_dev_block_qr);
     //test_qr(test_dev_householder_qr);
     //test_qr(test_h_block_qr);
-    test_qr(test_dev_block_qr);
-
     //test_mmult(test_dev_smem_mmult);
     //test_mmult_in_place();
     //test_mmult_in_place_transpose_a();
