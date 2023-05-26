@@ -1,6 +1,4 @@
 /*
-Copyright (c) 2023 Jaidon Lybbert <jaidonlybbert@gmail.com>
-
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -45,7 +43,6 @@ SOFTWARE.
 #include <cstdlib>
 #include <vector>
 #include <chrono>
-#include <dirent.h>
 #include <iomanip>
 #include <sstream>
 #include <algorithm>
@@ -61,7 +58,7 @@ SOFTWARE.
 
 // Thread block sizes for TC MMULT
 // Shrink to get more shared memory per warp, expand to increase memory re-use
-#define TC_MMULT_THREAD_BLOCK_WIDTH 4 * WARP_SIZE
+#define TC_MMULT_THREAD_BLOCK_WIDTH 128
 #define TC_MMULT_THREAD_BLOCK_HEIGHT 4
 
 // Thread block sizes for array cpy
@@ -119,7 +116,29 @@ void h_identity_mtx(float* I, int m, int n) {
     }
 }
 
-void h_mmult(float* A, float* B, float* C, int m, int n, int k) {
+template <typename T>
+T* h_generate_random_matrix(int height, int width) {
+    /*
+    * Returns pointer to random float matrix of dimensions HeightxWidth
+    */
+    unsigned seed = time(0);
+    srand(seed);
+    T* matrix = (T*)malloc(height * width * sizeof(T));
+    for (int row = 0; row < height; row++) {
+        for (int col = 0; col < width; col++) {
+            float rand_fun = (float)((float)rand() / RAND_MAX);
+            T random_num = (T)rand_fun;
+            matrix[row * width + col] = random_num; // randomize this number
+        }
+    }
+
+    return matrix;
+}
+template float* h_generate_random_matrix<float>(int, int);
+template __half* h_generate_random_matrix<__half>(int, int);
+
+template <typename T_A, typename T_B, typename T_C>
+void h_mmult(T_A* A, T_B* B, T_C* C, int m, int n, int k) {
     /*
     * A - mxk
     * B - kxn
@@ -130,14 +149,17 @@ void h_mmult(float* A, float* B, float* C, int m, int n, int k) {
 
     for (int row = 0; row < m; row++) {
         for (int col = 0; col < n; col++) {
-            float inner_product = 0;
+            T_C inner_product = 0;
             for (int inner_idx = 0; inner_idx < k; inner_idx++) {
-                inner_product += A[row * k + inner_idx] * B[(inner_idx)*n + col];
+                inner_product += (T_C)A[row * k + inner_idx] * (T_C)B[(inner_idx)*n + col];
             }
             C[row * n + col] = inner_product;
         }
     }
 }
+
+template void h_mmult<float, float, float>(float*, float*, float*, int, int, int);
+template void h_mmult<__half, __half, float>(__half*, __half*, float*, int, int, int);
 
 void h_mmult_transpose_A(float* A, float* B, float* C, int m) {
     for (int row = 0; row < m; row++) {
@@ -223,7 +245,7 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
     float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
     bool pass = false;
     const double error_limit = 1.1920928955078125e-07;
-    h_mmult((float*)Q, R, QR, m, n, m);
+    h_mmult<float, float, float>((float*)Q, R, QR, m, n, m);
     h_matrix_subtract((float*)A, QR, A_sub_QR, m, n);
 
     float a_norm = h_matrix_norm((float*)A, m, n);
@@ -604,7 +626,7 @@ void h_launch_cpy_strided_array(T* h_dest, T* h_src, int dest_height, int dest_w
     int grid_width = dest_width / CPY_ARRAY_BLOCK_WIDTH +
         (dest_width % CPY_ARRAY_BLOCK_WIDTH != 0);
 
-    dim3 gridDim(grid_height, grid_width, 1);
+    dim3 gridDim(grid_width, grid_height, 1);
     dim3 blockDim(CPY_ARRAY_BLOCK_WIDTH, CPY_ARRAY_BLOCK_HEIGHT, 1);
     dev_cpy_strided_array<T> << <gridDim, blockDim >> > (dev_dest, dev_src, dest_height, dest_width, src_height, src_width, TOP_LEFT);
 
@@ -934,7 +956,7 @@ void dev_tensorcore_mmult_tiled(T_C* c_mtx, T_A* a_mtx, T_B* b_mtx, int m, int n
         // Compute tiled matrix multiply for warp
         for (int phase = 0; phase < num_phases; phase++) {
             // Load inputs
-            T_A* a_idx = &a_mtx[warp_y * k * TC_TILE_M + phase * TC_TILE_K];
+            T_A* a_idx = &a_mtx[warp_y * TC_TILE_M * k + phase * TC_TILE_K];
             T_B* b_idx = &b_mtx[phase * n * TC_TILE_K + warp_x * TC_TILE_N];
 
             wmma::load_matrix_sync(Amat, a_idx, k);
@@ -1351,13 +1373,13 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
     int grid_height = warp_grid_height / TC_MMULT_THREAD_BLOCK_HEIGHT +
                       (warp_grid_height % TC_MMULT_THREAD_BLOCK_HEIGHT != 0); // Integer div. rounded up
     int grid_width = warp_grid_width * WARP_SIZE / TC_MMULT_THREAD_BLOCK_WIDTH +
-                     (warp_grid_width % TC_MMULT_THREAD_BLOCK_WIDTH != 0);
+                     ((warp_grid_width * WARP_SIZE) % TC_MMULT_THREAD_BLOCK_WIDTH != 0);
 
     // Configure grid
-    dim3 gridDim(grid_height, grid_width, 1);
+    dim3 gridDim(grid_width, grid_height, 1);
     dim3 blockDim(TC_MMULT_THREAD_BLOCK_WIDTH, TC_MMULT_THREAD_BLOCK_HEIGHT, 1);
 
-    dev_tensorcore_mmult_tiled<T_A, T_B, T_C> << <gridDim, blockDim >> > (dev_c, dev_b, dev_a, m_padded, n_padded, k_padded);
+    dev_tensorcore_mmult_tiled<T_A, T_B, T_C> << <gridDim, blockDim >> > (dev_c, dev_a, dev_b, m_padded, n_padded, k_padded);
 
     cudaDeviceSynchronize();
 
@@ -1495,37 +1517,43 @@ void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int globa
     nvtxRangePop();
 }
 
-void test_template_tensorcore_mmult_tiled() {
-    printf("\nTesting template tensorcore tiled mmult 33x33x33...\n");
+void test_template_tensorcore_mmult_tiled(int m, int n, int k) {
+    printf("\nTesting template tensorcore tiled mmult (m, n, k) = (%dx%dx%d)...\n", m, n, k);
 
+    // Initialize random matrices
+    __half* a_mtx = h_generate_random_matrix<__half>(m, k);
+    __half* b_mtx = h_generate_random_matrix<__half>(k, n);
+    float* c_mtx_dev_result = (float*)malloc(m * n * sizeof(float));
+    float* c_mtx_h_result = (float*)malloc(m * n * sizeof(float));
 
-    int m = 33;
-    int n = 33;
-    int k = 33;
+    memset(c_mtx_dev_result, 0.0, m * n * sizeof(float));
+    memset(c_mtx_h_result, 0.0, m * n * sizeof(float));
 
-    __half* a_mtx = (__half*)malloc(m * k * sizeof(__half));
-    __half* b_mtx = (__half*)malloc(k * n * sizeof(__half));
-    float* c_mtx = (float*)malloc(m * n * sizeof(float));
+    h_launch_dev_tensorcore_mmult_tiled<half, half, float>(a_mtx, b_mtx, c_mtx_dev_result, m, n, k);
 
-    // initialize matrices A, B, C
-    for (int i = 0; i < m; i++) {
-        for (int j = 0; j < n; j++) {
-            a_mtx[i * n + j] = (__half)(float)j;
-            b_mtx[i * n + j] = (__half)(float)j;
-            c_mtx[i * n + j] = (float)0.0f;
-        }
-    }
-
-    h_launch_dev_tensorcore_mmult_tiled<half, half, float>(a_mtx, b_mtx, c_mtx, m, n, n);
+    h_mmult<__half, __half, float>(a_mtx, b_mtx, c_mtx_h_result, m, n, k);
 
     // test result
+    bool pass = true;
+    float max_error = 0.0;
+
     for (int i = 0; i < m; i++) {
         for (int j = 0; j < n; j++) {
-            assert(c_mtx[i * n + j] == j * 528);
+            float error = abs(c_mtx_h_result[i * n + j] - c_mtx_dev_result[i * n + j]);
+            if (error > 5E-4) {
+                pass = false;
+                //printf("Error exceeded %.2E limit\n", 5E-4);
+            }
+            if (error > max_error) max_error = error;
         }
     }
 
-    printf("Test passed.\n");
+    if (pass) {
+        printf("Test passed. Max error: %.2E\n", max_error);
+        }
+    else {
+        printf("Test failed. Max error: %.2E exceeded %.2E limit\n", max_error, 5E-4);
+    }
 }
 
 void test_tensorcore_mmult_tiled() {
@@ -1670,21 +1698,8 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
     }
 }
 
-float* h_generate_random_matrix(int height, int width) {
-    /*
-    * Returns pointer to random float matrix of dimensions HeightxWidth
-    */
-    unsigned seed = time(0);
-    srand(seed);
-    float* matrix = (float*)malloc(height * width * sizeof(float));
-    for (int row = 0; row < height; row++) {
-        for (int col = 0; col < width; col++) {
-            matrix[row * width + col] = rand(); // randomize this number
-        }
-    }
 
-    return matrix;
-}
+
 
 void read_euroc_jacobian(std::string filename, int* rows, int* cols, float** matrix) {
     /*
@@ -1834,11 +1849,6 @@ void dev_apply_qt_to_a(float* dev_A, float* dev_panel_Q, float* res_A, int m, in
 }
 
 __global__
-void dev_apply_qt_to_a_tensorcore_gmem(half* dev_A, half* dev_panel_Q, int m, int n, int tau, int lambda) {
-
-}
-
-__global__
 void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, float* dev_Q_result, int m, int lambda) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x + lambda;
@@ -1850,6 +1860,11 @@ void dev_apply_qpanel_to_q(float* dev_Q, float* dev_Q_panel, float* dev_Q_result
         }
         dev_Q_result[row * m + col] = inner_product;
     }
+}
+
+__global__
+void dev_apply_qpanel_to_q_tensorcore(float* dev_Q, float* dev_Q_panel, float* dev_Q_result, int m, int lambda) {
+
 }
 
 __global__
@@ -2030,7 +2045,7 @@ void test_dev_householder_qr(int m, int n, int r) {
     printf("\nTesting GPU householder QR...\n");
     printf("Dimensions of A: %dx%d\n", m, n);
 
-    float* h_A_in = h_generate_random_matrix(m, n);
+    float* h_A_in = h_generate_random_matrix<float>(m, n);
 
     float* h_A_out = (float*)malloc((m+1) * n * sizeof(float)); // extra row gives room for storing householder vectors in lower triangular portion of A
     float* h_Q_out = (float*)malloc(m * m * sizeof(float));
@@ -2201,8 +2216,6 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     float time_ms = elapsed_time.count();
 
     float flops = h_qr_flops_per_second(time_ms, m, n);
-
-    h_q_backward_accumulation(A_out, &Q, m, n);
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
@@ -2515,7 +2528,7 @@ void test_h_block_qr(int m, int n, int r) {
     printf("\nTesting sequential block QR...\n");
     printf("Dimensions of A (m, n, r): (%d,%d,%d)\n", m, n, r);
 
-    float* A_in = h_generate_random_matrix(m, n);
+    float* A_in = h_generate_random_matrix<float>(m, n);
 
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
@@ -2781,6 +2794,15 @@ int main() {
     //test_dev_smem_mmult(6000, 4000, 6000);
     //test_tensorcore_mmult_gmem();
     //test_tensorcore_mmult_tiled();
-//     test_template_tensorcore_mmult_tiled();
+
+    //for (int m = 20; m < 2000; m *= 2) {
+    //    for (int n = m / 4; n < m; n *= 2) {
+    //        for (int k = n / 4; k < n; k *= 2) {
+    //            test_template_tensorcore_mmult_tiled(m, n, k);
+    //        }
+    //    }
+    //}
+
+    //test_template_tensorcore_mmult_tiled(65, 32, 16);
     //test_dev_block_qr_tensorcore_gmem();
 }
