@@ -24,9 +24,9 @@ def readFromLogFile(filename):
         # filter invalid data
 
         runtime = getAverage(data, 2)
-        for key in runtime:
-            runtime[key] /= 1000;
+        runtime = { key: runtime[key] / 1000 for key in runtime }
         flops = getAverage(data, 3)
         error = getAverage(data, 4)
+        error = { key: error[key] for key in error if error[key] < 1000 }
         return runtime, flops, error
 
