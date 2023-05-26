@@ -2655,7 +2655,7 @@ void test_qr_by_random_matrix(QR_FUNC f) {
         {1800, 1800, 32},
    };
     for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
-        float* A_in = h_generate_random_matrix(testDim[i].m, testDim[i].n);
+        float* A_in = h_generate_random_matrix<float>(testDim[i].m, testDim[i].n);
         f(testDim[i].m, testDim[i].n, testDim[i].r, A_in);
     }
 }
