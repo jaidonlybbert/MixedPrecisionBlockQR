@@ -33,5 +33,11 @@ plt.plot(gpu_error.keys(), error_gpu,color='b',label='gpu')
 plt.xlabel('Matrix rows')
 plt.ylabel('Error(1e-8)')
 plt.legend(loc = "best")
+# gpu runtime
+plt.figure()
+plt.plot(gpu_runtime.keys(), runtime_gpu,color='b',label='gpu')
+plt.xlabel('Matrix rows')
+plt.ylabel('Runtime(s)')
+plt.legend(loc = "best")
 
 plt.show()
