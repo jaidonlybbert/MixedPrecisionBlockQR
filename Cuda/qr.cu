@@ -1550,7 +1550,7 @@ void test_template_tensorcore_mmult_tiled(int m, int n, int k) {
 
     if (pass) {
         printf("Test passed. Max error: %.2E\n", max_error);
-        }
+    }
     else {
         printf("Test failed. Max error: %.2E exceeded %.2E limit\n", max_error, 5E-4);
     }
