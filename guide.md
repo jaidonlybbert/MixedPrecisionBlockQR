@@ -6,7 +6,9 @@
  ```bash
  git clone git@github.com:jaidonlybbert/MixedPrecisionBlockQR.git
  cd MixedPrecisionBlockQR/Cuda/
- # you may need add cuda environment variables in linux platform before compile
+# you may need add cuda environment variables in linux platform before compile: Such as 
+# export CUDA_PATH=/usr/local/cuda-11.0
+ 
 nvcc -arch=sm_75 qr.cu
 ```
 
