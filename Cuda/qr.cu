@@ -2037,6 +2037,87 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
     cudaFree(dev_Q_result);
 }
 
+void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
+    /*
+    * GPU code to compute QR decomposition with Block QR algorithm, including mixed-precision trailing matrix update
+    */
+
+    // Pointers to device data
+    float* dev_A;
+    float* dev_Q;
+    float* dev_panel_Q;
+    float* dev_A_panel_result;
+    float* dev_Q_result;
+
+    // Data sizes
+    size_t size_A = (m + 1) * n * sizeof(float);
+    size_t size_Q = (m * m * sizeof(float));
+
+    // Allocate memory on device
+    cudaMalloc(&dev_A, size_A);
+    cudaMalloc(&dev_Q, size_Q);
+    cudaMalloc(&dev_Q_result, size_Q);
+
+    // Move matrix A and Q (initialized as identity) to device
+    cudaMemcpy(dev_Q, Q, size_Q, cudaMemcpyHostToDevice);
+    cudaMemcpy(dev_Q_result, Q, size_Q, cudaMemcpyHostToDevice);
+
+    int lambda = 0;
+    while (lambda < n) { // panel starts at lambda
+        int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
+
+        // Q is stored in factored form in lower triangular portion of dev_A
+        // R is stored in upper triangular portion of dev_A
+        h_householder_qr(A, m, n, lambda, tau - lambda);
+
+        cudaMemcpy(dev_A, A, size_A, cudaMemcpyHostToDevice);
+
+        // Allocate memory for A result
+        size_t size_panel_A = (m - lambda) * (n - tau) * sizeof(float);
+        cudaMalloc(&dev_A_panel_result, size_panel_A);
+
+        // Perform WY transform to construct Q for panel from householder vectors stored in matrix A
+        dev_wy_transform(dev_A, &dev_panel_Q, m, n, lambda, tau - lambda);
+
+        // Update trailing matrix in place : A = Qt @ A
+        float blockWidth = 32.;
+        float blockHeight = 32.;
+        dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
+        shared_mem_mmult_in_place_transpose_a << <GridDim, BlockDim >> > (dev_A_panel_result, dev_panel_Q, dev_A,
+            (m - lambda), (n - tau), (m - lambda), m, n);
+        cudaDeviceSynchronize();
+
+        // Copy panel A result to matrix A
+        dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
+        dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
+        dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
+            (m - lambda), (n - tau), BOTTOM_RIGHT);
+        cudaDeviceSynchronize();
+
+        // Update Q matrix with panel Q
+        dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
+        dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
+        dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> > (dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
+        cudaDeviceSynchronize();
+
+        // Overwrite Q with result
+        cudaMemcpy(dev_Q, dev_Q_result, size_Q, cudaMemcpyDeviceToDevice);
+
+        cudaFree(dev_panel_Q);
+        cudaFree(dev_A_panel_result);
+        cudaMemcpy(A, dev_A, size_A, cudaMemcpyDeviceToHost);
+
+        // increment panel offset
+        lambda = tau;
+    }
+
+    cudaMemcpy(Q, dev_Q, size_Q, cudaMemcpyDeviceToHost);
+
+    cudaFree(dev_A);
+    cudaFree(dev_Q);
+    cudaFree(dev_Q_result);
+}
 
 void test_dev_householder_qr(int m, int n, int r) {
     printf("\nTesting GPU householder QR...\n");
@@ -2750,6 +2831,54 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     auto start_time = std::chrono::high_resolution_clock::now(); // Time how long the QR function takes to execute
     //dev_block_qr((float*)A_out, Q1, m, n, r);
     dev_block_qr_wy(A_out, Q, m, n, r);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+        end_time - start_time;
+    float time_ms = elapsed_time.count();
+
+    float flops = h_qr_flops_per_second(time_ms, m, n);
+
+    h_strip_R_from_A((float*)A_out, R, m, n);
+
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
+    float error2 = h_error_2(Q, m);
+    float error3 = h_error_3(R, m, n);
+
+    // write results to log file
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
+
+    printf("GPU block QR finished...\n");
+    printf("Averaged %.2f GFLOPs\n", flops / 1E9);
+    printf("GPU Block QR finished in %.2f ms...\n", time_ms);
+
+    free(Q);
+    free(R);
+    free(A_out);
+    free(A_in);
+}
+
+
+void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
+    /*
+    * Test GPU version of block QR, with mixed-precision trailing matrix update
+    */
+
+    printf("\nTesting GPU mixed-precision block QR...\n");
+    printf("Dimensions of A (m, n, r): (%d, %d, %d)\n", m, n, r);
+
+    float* Q = (float*)malloc(m * m * sizeof(float));
+    float* R = (float*)malloc(m * n * sizeof(float));
+    float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
+
+    memset(A_out, 0.0, (m + 1) * n * sizeof(float));
+
+    h_identity_mtx(Q, m, m);
+
+    h_matrix_cpy((float*)A_in, A_out, m, n);
+
+    auto start_time = std::chrono::high_resolution_clock::now(); // Time how long the QR function takes to execute
+    //dev_block_qr((float*)A_out, Q1, m, n, r);
+    dev_mixed_precision_block_qr(A_out, Q, m, n, r);
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> elapsed_time =
         end_time - start_time;
