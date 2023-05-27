@@ -437,8 +437,7 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
     h_identity_mtx(*h_Q, m, m);
 
     // Declare temporary vectors
-    float* v;
-    float beta;
+    float inner_product;
 
     for (int j = n - 1; j >= 0; j--) { // iterate over householder vectors stored in lower part of A
         int v_length = m - j; // v is the householder vector, smallest first
@@ -450,7 +449,7 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
         // (V^T) @ Q_j:m,j:m
         float* temp = (float*)malloc((m - j) * sizeof(float));
         for (int col = j; col < m; col++) {
-            float inner_product = 0;
+            inner_product = 0.0;
             for (int row = j; row < m; row++) {
                 inner_product += h_A[(row + 1) * n + j] * (*h_Q)[row * m + col];
             }
@@ -2199,9 +2198,11 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
 
     int global_offset = 0;
 
-    float* Q = (float*)malloc(m * m * sizeof(float));
+    float* Q;
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
+
+    memset(A_out, 0.0, (m + 1) * n * sizeof(float));
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
