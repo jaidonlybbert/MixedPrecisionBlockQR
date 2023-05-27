@@ -440,8 +440,6 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
     float inner_product;
 
     for (int j = n - 1; j >= 0; j--) { // iterate over householder vectors stored in lower part of A
-        int v_length = m - j; // v is the householder vector, smallest first
-        v = (float*)malloc((m - j) * sizeof(float));
 
         // Q = (Im - 2v(v^T))Q
         // Q = Q_j:m,j:m - 2V @ ((V^T) @ Q_j:m,j:m)
