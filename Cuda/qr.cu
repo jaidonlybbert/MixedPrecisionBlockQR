@@ -2258,6 +2258,8 @@ void test_h_wy_transform() {
     float* h_R = (float*)malloc(m * n * sizeof(float));
     float* h_Q_out = NULL; // pointer to Q is returned by h_wy_transform
 
+    memset(h_A_out, 0, (m + 1) * n * sizeof(float));
+
     h_householder_qr((float*)h_A_in, m, n, 0, n);
 
     h_wy_transform((float*)h_A_out, &h_Q_out, m, n, 0, n);
@@ -2738,6 +2740,8 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
+
+    memset(A_out, 0.0, (m + 1) * n * sizeof(float));
 
     h_identity_mtx(Q, m, m);
 
