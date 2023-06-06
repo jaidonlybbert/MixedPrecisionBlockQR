@@ -100,19 +100,16 @@ void h_strip_R_from_A(float* A, float* R, int m, int n) {
 float h_qr_flops_per_second(float time_ms, int m, int n) {
     /*
     * Computes FLOPs / second for householder QR given matrix dimensions and execution time
-    *
-    * TASK21 2 Mike: Verify equation and provide academic reference for equation (textbook or paper)
     */
     return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms / 1000);
 }
 
-float h_backward_error(float* A, float* R, float* Q, int m, int n) {
+float h_backward_error(float* A, float* R, float* Q, int m, int n, int precision_bits) {
     // Computes || A - QR||/||A ||
-
     float* QR = (float*)malloc(m * n * sizeof(float));
     float* A_sub_QR = (float*)malloc(m * n * sizeof(float));
     bool pass = false;
-    const double error_limit = 1.1920928955078125e-07;
+    const double error_limit = pow<double>(2, -precision_bits);
     h_mmult<float, float, float>((float*)Q, R, QR, m, n, m);
     h_matrix_subtract((float*)A, QR, A_sub_QR, m, n);
 
@@ -129,10 +126,9 @@ float h_backward_error(float* A, float* R, float* Q, int m, int n) {
     return backward_error;
 }
 
-float h_error_2(float* Q, int m) {
-
+float h_q_error(float* Q, int m, int precision_bits) {
     // ||Q^T @ Q - Im||
-    const double error_limit = pow<double>(2, -23);//1.1920928955078125e-07;
+    const double error_limit = pow<double>(2, -precision_bits);
     bool pass = false;
     float* Qt_Q = (float*)malloc(m * m * sizeof(float));
     float* Im = (float*)malloc(m * m * sizeof(float));
@@ -166,10 +162,9 @@ float h_error_2(float* Q, int m) {
     return max_error;
 }
 
-float h_error_3(float* R, int m, int n) {
+float h_lower_trapezoid_error(float* R, int m, int n, int precision_bits) {
     // Compute third type of error for QR result
-    // ||L|| < m * 2E-23
-    const double error_limit = 1.1920928955078125e-07;
+    const double error_limit = pow<double>(2, -precision_bits);
     bool pass = false;
     float* L = (float*)malloc(m * n * sizeof(float));
     for (int row = 0; row < m; row++) {
@@ -464,14 +459,6 @@ void dev_wy_copy_z_and_w(float* dev_z, float* dev_W, float* dev_Y, float* dev_A,
         }
     }
 }
-
-
-
-__global__
-void dev_panel_wy_transform(float* dev_A, float* dev_Q, int m, int n, int global_offset, int panel_width) {
-
-}
-
 
 
 __global__
@@ -1095,16 +1082,111 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
         cudaDeviceSynchronize();
 
         // Update Q matrix with panel Q
-        dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
-        dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> > (dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
+        /*
+        * TensorCore matrix multiply requires padding, so copy matrix to larger allocation
+        */
+
+        // Allocation size must be integer multiple of TC tile size
+        int q_panel_width         = m - lambda;
+        int q_panel_width_padded  = (q_panel_width % TC_TILE_N) ? q_panel_width + (TC_TILE_N - q_panel_width % TC_TILE_N) : q_panel_width;
+        int q_panel_height_padded = (q_panel_width % TC_TILE_K) ? q_panel_width + (TC_TILE_K - q_panel_width % TC_TILE_K) : q_panel_width;
+        int q_width_padded        = q_panel_height_padded;
+        int q_height_padded       = (m % TC_TILE_M) ? m + (TC_TILE_M - m % TC_TILE_M) : m;
+
+        // Allocate memory for padded arrays
+        __half* q_padded;
+        __half* q_panel_padded;
+        float* q_panel_result;
+        size_t q_padded_size = q_width_padded * q_height_padded * sizeof(__half);
+        size_t q_panel_padded_size = q_panel_width * q_panel_width * sizeof(__half);
+        size_t q_panel_result_size = q_height_padded * q_panel_width_padded * sizeof(float);
+        cudaMalloc(&q_padded, q_padded_size);
+        cudaMalloc(&q_panel_padded, q_panel_padded_size);
+        cudaMalloc(&q_panel_result, q_panel_result_size);
+        cudaMemset(q_padded, 0, q_padded_size);
+        cudaMemset(q_panel_padded, 0, q_panel_padded_size);
+        cudaMemset(q_panel_result, 0, q_panel_result_size);
+
+        // Initialize parameters to copy and cast q matrix to q_padded matrix
+        CopyMatrixParam p;
+        p.src_width = m;
+        p.src_height = m;
+        p.dest_width = q_width_padded;
+        p.dest_height = q_height_padded;
+        p.dest_col_start = 0;
+        p.dest_row_start = 0;
+        p.src_col_start = lambda;
+        p.src_col_end = m;
+        p.src_row_start = 0;
+        p.src_row_end = m;
+
+        h_launch_dev_cpy_and_cast_array<float, __half>(q_padded, dev_Q, p);
+        
+        // Initialize parameters to copy and cast q_panel matrix to q_panel_padded matrix
+        CopyMatrixParam p2;
+        p2.src_width = q_panel_width;
+        p2.src_height = q_panel_width;
+        p2.dest_width = q_panel_width_padded;
+        p2.dest_height = q_panel_height_padded;
+        p2.dest_col_start = 0;
+        p2.dest_row_start = 0;
+        p2.src_col_start = 0;
+        p2.src_col_end = q_panel_width;
+        p2.src_row_start = 0;
+        p2.src_row_end = q_panel_width;
+
+        h_launch_dev_cpy_and_cast_array<float, __half>(q_panel_padded, dev_panel_Q, p2);
+
+        /*
+        * DEBUG CHECKS
+        */
+        //float* q_checkpoint_f = (float*)malloc(m * m * sizeof(float));
+        //float* q_panel_checkpoint_f = (float*)malloc(q_panel_width * q_panel_width * sizeof(float));
+        //__half* q_checkpoint_h = (__half*)malloc(q_height_padded * q_width_padded * sizeof(__half));
+        //__half* q_panel_checkpoint_h = (__half*)malloc(q_panel_width_padded * q_panel_width_padded * sizeof(__half));
+        //cudaMemcpy(q_checkpoint_f, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(q_panel_checkpoint_f, dev_panel_Q, q_panel_width * q_panel_width * sizeof(float), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(q_checkpoint_h, q_padded, q_width_padded * q_height_padded * sizeof(__half), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(q_panel_checkpoint_h, q_panel_padded, q_panel_width_padded * q_panel_width_padded * sizeof(__half), cudaMemcpyDeviceToHost);
+        
+        // Configure grid of "warp blocks" which overlay output
+        int warp_grid_height = q_height_padded / TC_TILE_M + (q_height_padded % TC_TILE_M != 0);
+        int warp_grid_width = q_panel_width_padded / TC_TILE_N + (q_panel_width_padded % TC_TILE_N != 0);
+
+        // Configure grid of thread blocks
+        int grid_height = warp_grid_height / TC_MMULT_THREAD_BLOCK_HEIGHT +
+            (warp_grid_height % TC_MMULT_THREAD_BLOCK_HEIGHT != 0); // Integer div. rounded up
+        int grid_width = warp_grid_width * WARP_SIZE / TC_MMULT_THREAD_BLOCK_WIDTH +
+            ((warp_grid_width * WARP_SIZE) % TC_MMULT_THREAD_BLOCK_WIDTH != 0);
+
+        // Configure grid
+        dim3 gridDim5(grid_width, grid_height, 1);
+        dim3 blockDim5(TC_MMULT_THREAD_BLOCK_WIDTH, TC_MMULT_THREAD_BLOCK_HEIGHT, 1);
+
+        dev_tensorcore_mmult_tiled<__half, __half, float><<<gridDim5, blockDim5>>>(q_panel_result, q_padded, q_panel_padded, q_height_padded, q_panel_width_padded, q_panel_width_padded);
         cudaDeviceSynchronize();
 
-        // Overwrite Q with result
-        cudaMemcpy(dev_Q, dev_Q_result, size_Q, cudaMemcpyDeviceToDevice);
+        // Initialize parameters to copy Q panel result to dev_Q
+        CopyMatrixParam p3;
+        p3.src_width = q_width_padded;
+        p3.src_height = q_height_padded;
+        p3.dest_width = m;
+        p3.dest_height = m;
+        p3.dest_col_start = lambda;
+        p3.dest_row_start = 0;
+        p3.src_col_start = 0;
+        p3.src_col_end = q_panel_width;
+        p3.src_row_start = 0;
+        p3.src_row_end = m;
+
+        h_launch_dev_cpy_and_cast_array<float, float>(dev_Q, q_panel_result, p3);
 
         cudaFree(dev_panel_Q);
         cudaFree(dev_A_panel_result);
+        cudaFree(q_padded);
+        cudaFree(q_panel_padded);
+        cudaFree(q_panel_result);
+
         cudaMemcpy(A, dev_A, size_A, cudaMemcpyDeviceToHost);
 
         // increment panel offset
@@ -1157,9 +1239,10 @@ void test_dev_householder_qr(int m, int n, int r) {
 
     h_strip_R_from_A((float*)h_A_out, h_R, m, n);
 
-    float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
-    float error3 = h_error_3(h_R, m, n);
-    float error2 = h_error_2(h_Q_out, m);
+    int precision_bits = 23; // Bits contributing to precision for IEEE-754 FP32
+    float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n, precision_bits);
+    float error3 = h_lower_trapezoid_error(h_R, m, n, precision_bits);
+    float error2 = h_q_error(h_Q_out, m, precision_bits);
 
     printf("GPU householder QR finished in %.2f ms...\n", time_ms);
 }
@@ -1254,12 +1337,11 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
-    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-    float error3 = h_error_3(R, m, n);
-    float error2 = h_error_2(Q, m);
-    //printf("||A - QR||/||A|| = %e\n", backward_error);
-    //printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
-    //printf("||L|| = %e\n", error3);
+    int precision_bits = 23; // Bits contributing to precision for IEEE-754 FP32
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n, precision_bits);
+    float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
+    float error2 = h_q_error(Q, m, precision_bits);
+
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
@@ -1302,7 +1384,7 @@ void test_h_wy_transform() {
 
     h_strip_R_from_A(h_A_out, h_R, m, n);
 
-    float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n);
+    float backward_error = h_backward_error((float*)h_A_in, h_R, h_Q_out, m, n, 23);
 
     free(h_A_out);
     free(h_Q_out);
@@ -1584,9 +1666,10 @@ void test_h_block_qr(int m, int n, int r) {
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
-    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-    float error2 = h_error_2(Q, m);
-    float error3 = h_error_3(R, m, n);
+    int precision_bits = 23; // Bits contributing to precision for IEEE-754 FP32
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n, precision_bits);
+    float error2 = h_q_error(Q, m, precision_bits);
+    float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
 
     // write results to log file
     h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error, "cpu_block");
@@ -1729,9 +1812,10 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
-    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-    float error2 = h_error_2(Q, m);
-    float error3 = h_error_3(R, m, n);
+    int precision_bits = 23; // Bits contributing to precision for IEEE-754 FP32
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n, precision_bits);
+    float error2 = h_q_error(Q, m, precision_bits);
+    float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
 
     // write results to log file
     h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
@@ -1777,9 +1861,10 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
-    float backward_error = h_backward_error((float*)A_in, R, Q, m, n);
-    float error2 = h_error_2(Q, m);
-    float error3 = h_error_3(R, m, n);
+    int precision_bits = 11; // Bits contributing to precision for IEEE-754 FP32
+    float backward_error = h_backward_error((float*)A_in, R, Q, m, n, precision_bits);
+    float error2 = h_q_error(Q, m, precision_bits);
+    float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
 
     // write results to log file
     h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
@@ -1794,61 +1879,41 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
     free(A_in);
 }
 
+void test_iterator_dev_wy_funcs() {
+    for (int rows = 10; rows < 1000; rows *= 2) {
+        for (int panel_width = 2; panel_width < 16; panel_width *= 2) {
+            for (int current_column = 1; current_column < panel_width; current_column *= 2) {
+                test_dev_wy_compute_Im_sub_W_Yt(rows, panel_width, current_column);
+            }
+        }
+    }
 
+    for (int m = 10; m < 1000; m *= 2) {
+        for (int n = 2; n < 16; n *= 2) {
+            test_dev_wy_compute_z(m, n, n / 2, 0);
+        }
+    }
 
-int main() {
-//     test_h_mmult();
-//     test_h_mmult_transpose_A();
-//
-//     for (int rows = 10; rows < 1000; rows *= 2) {
-//         for (int panel_width = 2; panel_width < 16; panel_width *= 2) {
-//             for (int current_column = 1; current_column < panel_width; current_column *= 2) {
-//                 test_dev_wy_compute_Im_sub_W_Yt(rows, panel_width, current_column);
-//             }
-//         }
-//     }
-//
-//     for (int m = 10; m < 1000; m *= 2) {
-//         for (int n = 2; n < 16; n *= 2) {
-//             test_dev_wy_compute_z(m, n, n / 2, 0);
-//         }
-//     }
-//
-//     for (int m = 40; m < 2000; m *= 2) {
-//         for (int n = m / 4; n < m; n *= 2) {
-//             for (int global_offset = n / 4; global_offset < n; global_offset *= 2) {
-//                 int panel_width;
-//                 if (n-global_offset < 16) {
-//                     panel_width = n-global_offset;
-//                 }
-//                 else if (m < 500) {
-//                     panel_width = 16;
-//                 }
-//                 else {
-//                     panel_width = 8;
-//                 }
-//                 test_dev_wy_transform(m, n, panel_width, global_offset);
-//             }
-//         }
-//     }
+    for (int m = 40; m < 2000; m *= 2) {
+        for (int n = m / 4; n < m; n *= 2) {
+            for (int global_offset = n / 4; global_offset < n; global_offset *= 2) {
+                int panel_width;
+                if (n - global_offset < 16) {
+                    panel_width = n - global_offset;
+                }
+                else if (m < 500) {
+                    panel_width = 16;
+                }
+                else {
+                    panel_width = 8;
+                }
+                test_dev_wy_transform(m, n, panel_width, global_offset);
+            }
+        }
+    }
+}
 
-
-
-    // test_qr_by_random_matrix(test_h_householder_qr);
-    // test_qr_by_random_matrix(test_dev_block_qr);
-
-    //test_qr(test_h_householder_qr);
-    //test_qr(test_dev_mixed_precision_block_qr);
-    //test_qr(test_dev_householder_qr);
-    //test_qr(test_h_block_qr);
-    //test_mmult(test_dev_smem_mmult);
-    //test_mmult_in_place();
-    //test_mmult_in_place_transpose_a();
-    //test_mmult(test_dev_smem_mmult_in_place);
-
-    //test_dev_smem_mmult(6000, 4000, 6000);
-    //test_tensorcore_mmult_1_warp();
-
+void test_iterator_template_tensorcore_mmult_tiled() {
     for (int m = 20; m < 2000; m *= 2) {
         for (int n = m / 4; n < m; n *= 2) {
             for (int k = n / 4; k < n; k *= 2) {
@@ -1863,7 +1928,20 @@ int main() {
             }
         }
     }
+}
 
-    //test_template_tensorcore_mmult_tiled(65, 32, 16);
-    //test_dev_block_qr_tensorcore_gmem();
+int main() {
+
+    test_iterator_dev_wy_funcs();
+    test_iterator_template_tensorcore_mmult_tiled();
+
+    test_qr_by_random_matrix(test_h_householder_qr);
+    test_qr_by_random_matrix(test_dev_block_qr);
+    test_qr_by_random_matrix(test_dev_mixed_precision_block_qr);
+
+    test_qr(test_h_householder_qr);
+    test_qr(test_dev_block_qr);
+    test_qr(test_dev_mixed_precision_block_qr);
+
+    return 0;
 }
