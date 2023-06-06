@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 from util import readFromLogFile
 
+
 cpu_runtime, cpu_flops, cpu_error = readFromLogFile('cpu_householder')
 gpu_runtime, gpu_flops, gpu_error = readFromLogFile('gpu_block')
 
@@ -11,7 +12,7 @@ runtime_gpu =[item[1] for item in sorted(gpu_runtime.items())]
 plt.plot(cpu_runtime.keys(), runtime_cpu,color='g',label='cpu')
 plt.plot(gpu_runtime.keys(), runtime_gpu,color='b',label='gpu')
 plt.xlabel('Matrix rows')
-plt.ylabel('Runtime(s)')
+plt.ylabel('GFLOP/s')
 plt.legend(loc = "best")
 
 # flops plot
@@ -41,3 +42,4 @@ plt.ylabel('Runtime(s)')
 plt.legend(loc = "best")
 
 plt.show()
+

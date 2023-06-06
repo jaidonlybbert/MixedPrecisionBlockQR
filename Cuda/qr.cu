@@ -52,7 +52,6 @@ SOFTWARE.
 
 typedef void QR_FUNC(int, int, int, float*);
 
-
 void h_write_results_to_log(int height, int width, float time_ms, float flops_per_second, float backward_error, std::string file_name = "logFile") {
     //write arguments to log file
     std::vector<double> params = { height * 1.0, width * 1.0, time_ms, flops_per_second, backward_error };
@@ -235,7 +234,7 @@ void h_householder_qr(float* A, int m, int n, int global_offset, int panel_width
             continue;
         }
         mag = sqrtf(mag);
-
+        
         // Compute householder normal vector w_k
         u[0] = sign * mag + u[0]; // v overwrites u
         // Normalize
@@ -321,6 +320,54 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
         for (int row = j; row < m; row++) {
             for (int col = j; col < m; col++) {
                 (*h_Q)[row * m + col] = (*h_Q)[row * m + col] - 2.0 * h_A[(row + 1) * n + j] * temp[col - j];
+            }
+        }
+    }
+}
+
+void h_q_panel_backward_accumulation(float* h_A, float** panel_Q, int m, int n, int global_offset, int panel_width) {
+    /*
+    * "Backward accumulation" of Q from householder vectors stored in lower trapezoidal region
+    *   of A, after householder QR
+    *
+    * Reference:
+    *   Golub, Van Loan. Matrix Computations, Fourth Edition. The Johns Hopkins
+    *   University Press. Pg. 238. Algorithm 5.1.5
+    */
+
+    // Initialize panel Q as identity (always a square matrix)
+    int panel_q_dim = m - global_offset;
+    * panel_Q = (float*)malloc(panel_q_dim * panel_q_dim * sizeof(float));
+    h_identity_mtx(*panel_Q, panel_q_dim, panel_q_dim);
+
+    // Declare temporary vectors
+    float* v;
+    float beta;
+
+    for (int j = global_offset + panel_width - 1; j >= global_offset; j--) { // iterate over householder vectors stored in lower part of A
+        int v_length = m - j; // v is the householder vector, smallest first
+        v = (float*)malloc(v_length * sizeof(float));
+
+        // Q = (Im - 2v(v^T))Q
+        // Q = Q_j:m,j:m - 2V @ ((V^T) @ Q_j:m,j:m)
+
+        // (V^T) @ Q_j:m,j:m
+        float* temp = (float*)malloc(v_length * sizeof(float));
+        for (int col = j; col < m; col++) { // col of matrix A, where v is stored
+            float inner_product = 0;
+            for (int row = j; row < m; row++) { // rows of matrix A, where v is stored
+                inner_product += 
+                    h_A[(row + 1) * n + j] * (*panel_Q)[(row-global_offset) * panel_q_dim + (col-global_offset)];
+            }
+            temp[col - j] = inner_product;
+        }
+
+        // Q_j:m,j:m = Q_j:m,j:m - 2 * V @ ((V^T) @ Q_j:m,j:m)
+        for (int row = j; row < m; row++) { // row of Q result
+            for (int col = j; col < m; col++) { // col of Q result
+                (*panel_Q)[(row-global_offset) * panel_q_dim + (col-global_offset)] = 
+                    (*panel_Q)[(row-global_offset) * panel_q_dim + (col-global_offset)] - 
+                            2.0 * h_A[(row + 1) * n + j] * temp[col - j];
             }
         }
     }
@@ -682,8 +729,6 @@ void dev_householder_qr(float *dev_A, int m, int n, int global_offset) {
 }
 
 
-
-
 void read_euroc_jacobian(std::string filename, int* rows, int* cols, float** matrix) {
     /*
     * Reads text file containing jacobian matrices from the Euroc dataset, and returns pointer to matrix
@@ -871,6 +916,7 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
     */
 
     float* panel_Q = NULL;
+    float* panel_Q_wy = NULL;
     int lambda = 0;
     while (lambda < n) { // panel starts at lambda
         int tau = (lambda + r < n) ? (lambda + r) : n; // panel ends at tau
@@ -880,7 +926,8 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         h_householder_qr(A, m, n, lambda, tau-lambda);
 
         // Get panel Q from factors - dim panel_Q: (m-lambda)x(m-lambda)
-        h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+        //h_wy_transform(A, &panel_Q_wy, m, n, lambda, tau-lambda); // TASK10 3 shashank: write cuda kernel to implement WY transform on GPU
+        h_q_panel_backward_accumulation(A, &panel_Q, m, n, lambda, tau-lambda);
 
         // Update matrix A = Q^T @ A
         float blockWidth = 32.;
@@ -956,6 +1003,7 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
     // Data sizes
     size_t size_A = (m + 1) * n * sizeof(float);
     size_t size_Q = (m * m * sizeof(float));
+
 
     // Allocate memory on device
     cudaMalloc(&dev_A, size_A);
@@ -1264,7 +1312,8 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
         h_householder_qr(A, m, n, lambda, tau-lambda);
 
         // Get panel Q from factors
-        h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // dim panel_Q: (m-lambda)x(m-lambda)
+        //h_wy_transform(A, &panel_Q, m, n, lambda, tau-lambda); // dim panel_Q: (m-lambda)x(m-lambda)
+        h_q_panel_backward_accumulation(A, &panel_Q, m, n, lambda, tau - lambda);
 
         // Update matrix A = Q^T @ A
         float* A_old = (float*)malloc(m * n * sizeof(float));
@@ -1302,6 +1351,7 @@ void h_block_qr(float* A, float* Q, int m, int n, int r) {
 
 
 
+
 void test_h_householder_qr(int m, int n, int r, float* A_in) {
     /*
     * Test host version of householder QR
@@ -1324,9 +1374,11 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
 
+
     //h_block_qr((float*)A, Q, m, n, r);
     auto start_time = std::chrono::high_resolution_clock::now();
     h_householder_qr(A_out, m, n, 0, n);
+
     h_q_backward_accumulation(A_out, &Q, m, n);
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<float, std::milli> elapsed_time =
@@ -1345,32 +1397,123 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1e8, "cpu_householder");
 
+    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1e8, "cpu_householder");
 
     // write results to log file
     free(Q);
     free(R);
     free(A_out);
+    free(A_in);
 }
 
-void test_h_householder_qr() {
+/*
+ * Test jacobian matrices for householder_qr
+ * ||A - QR||/||A|| = -nan Error Criteria: False
+ * uncertain reason for the error.
+ */
+void process_files_in_directory(const char *directory_path,
+                                const char *file_prefix) {
+  DIR *dir;
+  struct dirent *ent;
 
+  if ((dir = opendir(directory_path)) != NULL) {
+    while ((ent = readdir(dir)) != NULL) {
+      if (ent->d_type == DT_REG) {
+        if (strncmp(ent->d_name, file_prefix, strlen(file_prefix)) == 0) {
+          char path[512];
+          snprintf(path, sizeof(path), "%s/%s", directory_path, ent->d_name);
+          printf("Processing file: %s\n", path);
+
+          int rows, cols;
+          double *A_in;
+        //   read_euroc_jacobian(path, &rows, &cols, &A_in);
+          int m = rows;
+          int n = cols;
+          int global_offset = 0;
+
+          float *Q = (float *)malloc(m * m * sizeof(float));
+          float *R = (float *)malloc(m * n * sizeof(float));
+          float *A_out = (float *)malloc((m + 1) * n * sizeof(float));
+
+          h_matrix_cpy((float *)A_in, A_out, m, n);
+
+          // Start timing
+          auto start_time = std::chrono::high_resolution_clock::now();
+          h_householder_qr((float *)A_out, m, n, 0, n);
+          // Calculate elapsed time
+          auto end_time = std::chrono::high_resolution_clock::now();
+          std::chrono::duration<float, std::milli> elapsed_time =
+              end_time - start_time;
+          float time_ms = elapsed_time.count();
+          float flops = h_qr_flops_per_second(time_ms, m, n);
+          // Print elapsed time with appropriate unit
+          std::string unit;
+          float time_value;
+          if (time_ms < 1000.0f) {
+            time_value = time_ms;
+            unit = "ms";
+          } else if (time_ms < 60000.0f) {
+            time_value = time_ms / 1000.0f;
+            unit = "s";
+          } else {
+            time_value = time_ms / 60000.0f;
+            unit = "min";
+          }
+
+          // h_wy_transform(A_out, &Q, m, n, global_offset, r);
+          h_q_backward_accumulation(A_out, &Q, m, n);
+          h_strip_R_from_A((float *)A_out, R, m, n);
+
+          float backward_error = h_backward_error((float *)A_in, R, Q, m, n);
+          float error3 = h_error_3(R, m, n);
+          float error2 = h_error_2(Q, m);
+
+          // printf("||A - QR||/||A|| = %e\n", backward_error);
+          // printf("||QT @ Q - Im|| = %e\n", h_error_2(Q, m));
+          // printf("||L|| = %e\n", error3);
+          printf("Averaged %.4f GFLOPs\n", flops / 1E9);
+          std::cout << "Sequential householder finished in " << std::fixed
+                    << std::setprecision(4) << time_value << " " << unit
+                    << std::endl;
+          //h_write_results_to_log(m, n, time, 0, backward_error, "cpu_householder");
+
+          free(Q);
+          free(R);
+          free(A_out);
+          free(A_in);
+        }
+      }
+    }
+    closedir(dir);
+  } else {
+    perror("Unable to open directory");
+  }
+}
+
+void test_h_jhouseholder_qr() {
+  printf("\nTesting (jacobians) sequential householder QR...\n");
+  const char *directory_path =
+      "/home/qr/Desktop/MixedPrecisionBlockQR/Cuda/jacobians/";
+
+  printf("Processing A_reduced files:\n");
+  process_files_in_directory(directory_path, "A_reduced");
+
+  // The execution is taking an amount of time
+  // printf("\nProcessing A_0 files:\n");
+  // process_files_in_directory(directory_path, "A_0");
+
+  printf("\n(jacobians) Sequential householder QR finished...\n");
 }
 
 
-void test_h_wy_transform() {
+
+void test_h_wy_transform(int m, int n, int r) {
     // Initialize test matrix A input on Host
     // TASK16 Alice: iterate over many matrix sizes
-    int m = 3;
-    int n = 3;
+    printf("Dimensions of A: %dx%d\n", m, n);
 
-    // TASK17 Alice: use h_generate_random_matrix to randomize input matrix
-    float h_A_in[3][3] = {
-        {12, -51, 4},
-        {6, 167, -68},
-        {-4, 24, -41},
-    };
+    float *h_A_in = h_generate_random_matrix(m, n);
 
     float* h_A_out = (float*)malloc((m + 1) * n * sizeof(float)); // extra row (m+1) gives room for storing householder vectors in lower triangular portion of A
     float* h_R = (float*)malloc(m * n * sizeof(float));
@@ -1639,7 +1782,7 @@ void test_dev_wy_transform(int m, int n, int panel_width, int global_offset) {
 }
 
 
-void test_h_block_qr(int m, int n, int r) {
+void test_h_block_qr(int m, int n, int r, float* A_in) {
     /*
     * Test host version of block QR
     */
@@ -1657,10 +1800,13 @@ void test_h_block_qr(int m, int n, int r) {
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
-    clock_t cycles = clock(); // Time how long the QR function takes to execute
+    auto start_time = std::chrono::high_resolution_clock::now();
     h_block_qr((float*)A_out, Q, m, n, r);
-    cycles = clock() - cycles;
-    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+    end_time - start_time;
+    float time_ms = elapsed_time.count();
+
 
     float flops_per_second = h_qr_flops_per_second(time_ms, m, n);
 
@@ -1672,7 +1818,7 @@ void test_h_block_qr(int m, int n, int r) {
     float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops_per_second, backward_error, "cpu_block");
+    h_write_results_to_log(m, n, time_ms, flops_per_second / 1E9, backward_error, "cpu_block");
 
     printf("Sequential block QR finished in %.2f ms...\n", time_ms);
     //printf("||A - QR||/||A|| = %e\n", backward_error);
@@ -1723,6 +1869,7 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     std::vector<MatrixInfo> result;
     int matrixCount = 30;
     for (int i =0;i < list.size() && result.size() < matrixCount;i+= 2) {
+
         result.push_back(list[i]);
     }
     return result;
@@ -1778,6 +1925,7 @@ void test_qr(QR_FUNC f) {
         int n;
         float* A_in;
         read_euroc_jacobian(item.filePath, &m, &n, &A_in);
+
         f(m, n, 16, A_in);
     }
 }
@@ -1830,8 +1978,8 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     free(A_in);
 }
 
-
 void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
+
     /*
     * Test GPU version of block QR, with mixed-precision trailing matrix update
     */
@@ -1839,7 +1987,9 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
     printf("\nTesting GPU mixed-precision block QR...\n");
     printf("Dimensions of A (m, n, r): (%d, %d, %d)\n", m, n, r);
 
+
     float* Q = (float*)malloc(m * m * sizeof(float));
+
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
@@ -1857,6 +2007,14 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
         end_time - start_time;
     float time_ms = elapsed_time.count();
 
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+    dev_block_qr((float*)A_out2, Q2, m, n, r);
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float, std::milli> elapsed_time =
+    end_time - start_time;
+    float time_ms = elapsed_time.count();
+        
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
     h_strip_R_from_A((float*)A_out, R, m, n);
@@ -1867,6 +2025,7 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
     float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
 
     // write results to log file
+
     h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
 
     printf("Mixed-precision GPU block QR finished...\n");
@@ -1942,6 +2101,7 @@ int main() {
     test_qr(test_h_householder_qr);
     test_qr(test_dev_block_qr);
     test_qr(test_dev_mixed_precision_block_qr);
+
 
     return 0;
 }
