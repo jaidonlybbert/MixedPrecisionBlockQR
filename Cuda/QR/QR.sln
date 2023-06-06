@@ -5,16 +5,32 @@ VisualStudioVersion = 17.3.32929.385
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "QR", "QR\QR.vcxproj", "{7A44EFD2-28FA-4610-B414-AC928836D531}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Solver", "Solver\Solver.vcxproj", "{35E3F260-EE98-4E61-AAAC-51F310D6165F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
 		Release|x64 = Release|x64
+		Release|x86 = Release|x86
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{7A44EFD2-28FA-4610-B414-AC928836D531}.Debug|x64.ActiveCfg = Debug|x64
 		{7A44EFD2-28FA-4610-B414-AC928836D531}.Debug|x64.Build.0 = Debug|x64
+		{7A44EFD2-28FA-4610-B414-AC928836D531}.Debug|x86.ActiveCfg = Debug|x64
+		{7A44EFD2-28FA-4610-B414-AC928836D531}.Debug|x86.Build.0 = Debug|x64
 		{7A44EFD2-28FA-4610-B414-AC928836D531}.Release|x64.ActiveCfg = Release|x64
 		{7A44EFD2-28FA-4610-B414-AC928836D531}.Release|x64.Build.0 = Release|x64
+		{7A44EFD2-28FA-4610-B414-AC928836D531}.Release|x86.ActiveCfg = Release|x64
+		{7A44EFD2-28FA-4610-B414-AC928836D531}.Release|x86.Build.0 = Release|x64
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Debug|x64.ActiveCfg = Debug|x64
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Debug|x64.Build.0 = Debug|x64
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Debug|x86.ActiveCfg = Debug|Win32
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Debug|x86.Build.0 = Debug|Win32
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Release|x64.ActiveCfg = Release|x64
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Release|x64.Build.0 = Release|x64
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Release|x86.ActiveCfg = Release|Win32
+		{35E3F260-EE98-4E61-AAAC-51F310D6165F}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
