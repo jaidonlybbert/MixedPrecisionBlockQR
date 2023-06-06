@@ -30,4 +30,3 @@ def readFromLogFile(filename):
         error = { key: error[key] for key in error if error[key] < 1000 }
         return runtime, flops, error
 
-
