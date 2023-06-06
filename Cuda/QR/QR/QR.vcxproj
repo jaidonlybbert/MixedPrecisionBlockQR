@@ -82,7 +82,7 @@
     <CudaCompile Include="..\..\qr.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mmult.h" />
+    <ClInclude Include="..\..\mmult.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
