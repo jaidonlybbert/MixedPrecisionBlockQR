@@ -1,7 +1,7 @@
 #pragma once
 
-#define TC_TILE_M 8
-#define TC_TILE_N 32
+#define TC_TILE_M 16
+#define TC_TILE_N 16
 #define TC_TILE_K 16
 #define WARP_SIZE 32
 
@@ -197,7 +197,57 @@ void dev_cpy_strided_array(T* dest, T* src, int dest_height, int dest_width, int
 
 }
 
+struct CopyMatrixParam {
+    int dest_height;
+    int dest_width;
+    int src_height;
+    int src_width;
+
+    int src_row_start;
+    int src_row_end;
+    int src_col_start;
+    int src_col_end;
+
+    int dest_col_start;
+    int dest_row_start;
+};
+
 template __global__ void dev_cpy_strided_array<float>(float*, float*, int, int, int, int, int);
+
+template <typename T_SRC, typename T_DEST>
+__global__
+void dev_cpy_and_cast_array(T_DEST* dest, T_SRC* src, CopyMatrixParam param) {
+    /*
+    * Copies an arbitrary submatrix from src matrix to dest matrix, while casting the type of each element from T_SRC to T_DEST
+    * 
+    * For the 'src' matrix of dimensions 'src_height' x 'src_width', the submatrix defined by:
+    *   - src_row_start
+    *   - src_row_end
+    *   - src_col_start
+    *   - src_col_end
+    * is copied to the 'dest' matrix at the location defined by:
+    *   - dest_col_start
+    *   - dest_row_start
+    * 
+    * The CUDA grid should encapsulate the dimensions of the submatrix
+    */
+
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    int src_row = param.src_row_start + row;
+    int dest_row = param.dest_row_start + row;
+    int src_col = param.src_col_start + col;
+    int dest_col = param.dest_col_start + col;
+
+    if (src_row < param.src_row_end && dest_row < param.dest_height &&
+        src_col < param.src_col_end && dest_col < param.dest_width)
+    {
+        dest[dest_row * param.dest_width + dest_col] = (T_DEST)src[src_row * param.src_width + src_col];
+    }
+}
+
+template __global__ void dev_cpy_and_cast_array<float, __half>(__half*, float*, CopyMatrixParam);
 
 template <typename T>
 void h_launch_cpy_strided_array(T* h_dest, T* h_src, int dest_height, int dest_width, int src_height, int src_width) {
@@ -859,7 +909,6 @@ void test_dev_smem_mmult_in_place_transpose_a(int m, int n, int k, int b_width, 
 }
 
 
-
 template <typename T_A, typename T_B, typename T_C>
 void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int m, int n, int k) {
     /*
@@ -869,6 +918,8 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
     * Dimensions of B: kxn
     * Dimensions of C: mxn
     */
+
+    nvtxRangePush(__func__);
 
     // Allocation size must be integer multiple of TC tile size
     int m_padded = (m % TC_TILE_M) ? m + (TC_TILE_M - m % TC_TILE_M) : m; // Padded height of A & C
@@ -926,6 +977,7 @@ void h_launch_dev_tensorcore_mmult_tiled(T_A* a_mtx, T_B* b_mtx, T_C* c_mtx, int
     cudaMemcpy(h_c, dev_c, c_bytes, cudaMemcpyDeviceToHost);
 
     h_launch_cpy_strided_array<T_C>(c_mtx, h_c, m, n, m_padded, n_padded);
+    nvtxRangePop();
 }
 
 template void h_launch_dev_tensorcore_mmult_tiled<half, half, float>(half*, half*, float*, int, int, int);
@@ -1148,3 +1200,100 @@ void test_h_mmult_transpose_A() {
         }
     }
 }
+
+template <typename T_SRC, typename T_DEST>
+void h_launch_dev_cpy_and_cast_array(T_DEST* dev_dest, T_SRC* dev_src, CopyMatrixParam param) {
+    // Sets up grid and launches kernel
+
+    int submatrix_width = param.src_col_end - param.src_col_start;
+    int submatrix_height = param.src_row_end - param.src_row_start;
+
+    dim3 gridDim(submatrix_width / CPY_ARRAY_BLOCK_WIDTH + (submatrix_width % CPY_ARRAY_BLOCK_WIDTH != 0),
+        submatrix_height / CPY_ARRAY_BLOCK_HEIGHT + (submatrix_height % CPY_ARRAY_BLOCK_HEIGHT != 0), 1);
+    dim3 blockDim(CPY_ARRAY_BLOCK_WIDTH, CPY_ARRAY_BLOCK_HEIGHT, 1);
+    dev_cpy_and_cast_array<T_SRC, T_DEST> << <gridDim, blockDim >> > (dev_dest, dev_src, param);
+    cudaDeviceSynchronize();
+}
+
+template void h_launch_dev_cpy_and_cast_array<float, float>(float*, float*, CopyMatrixParam);
+template void h_launch_dev_cpy_and_cast_array<float, __half>(__half*, float*, CopyMatrixParam);
+template void h_launch_dev_cpy_and_cast_array<__half, float>(float*, __half*, CopyMatrixParam);
+
+template <typename T_SRC, typename T_DEST>
+void test_dev_cpy_and_cast_array(CopyMatrixParam param) {
+    // Matrix sizes in bytes
+    size_t dest_size = param.dest_width * param.dest_height * sizeof(T_DEST);
+    size_t dest_size32 = param.dest_width * param.dest_height * sizeof(float); // For checking error, the result is cast to floating point
+    size_t src_size = param.src_width * param.src_height * sizeof(T_SRC);
+
+    // allocate destination matrix on host
+    float* h_dest32 = (float*)malloc(dest_size32);
+    // generate random source matrix on host 
+    T_SRC* h_src = h_generate_random_matrix<T_SRC>(param.src_height, param.src_width);
+    
+    // Declare device pointers to matrices
+    T_DEST* dev_dest;
+    float* dev_dest_32;
+    T_SRC* dev_src;
+    // Allocate matrices on device
+    cudaMalloc(&dev_dest, dest_size);
+    cudaMalloc(&dev_dest_32, dest_size32);
+    cudaMalloc(&dev_src, src_size);
+    // Copy source matrix from host to device
+    cudaMemcpy(dev_src, h_src, src_size, cudaMemcpyHostToDevice);
+    cudaMemset(dev_dest, 0, dest_size);
+    cudaMemset(dev_dest_32, 0, dest_size32);
+
+    // Launch copy kernel, grid construction and synchronization happens in wrapper function
+    h_launch_dev_cpy_and_cast_array<T_SRC, T_DEST>(dev_dest, dev_src, param);
+
+    // Copy and cast array back to original source matrix layout as FP32 for error checking
+    int num_rows = param.src_row_end - param.src_row_start; // exclusive of end row
+    int num_cols = param.src_col_end - param.src_col_start; // exlusive of end col
+
+    // Initialize copy parameters
+    CopyMatrixParam p2;
+    p2.src_width = param.dest_width;
+    p2.src_height = param.dest_height;
+    p2.dest_width = param.src_width;
+    p2.dest_height = param.src_height;
+    p2.dest_col_start = param.src_col_start;
+    p2.dest_row_start = param.src_row_start;
+    p2.src_col_start = param.dest_col_start;
+    p2.src_col_end = param.dest_col_start + num_cols;
+    p2.src_row_start = param.dest_row_start;
+    p2.src_row_end = param.dest_row_start + num_rows;
+
+    // Launch copy kernel
+    h_launch_dev_cpy_and_cast_array<T_DEST, float>(dev_dest_32, dev_dest, p2);
+
+    // Copy FP32 result back to host for comparison
+    cudaMemcpy(h_dest32, dev_dest_32, dest_size32, cudaMemcpyDeviceToHost);
+
+    float max_error = 0;
+    float error = 0;
+    int error_cnt = 0;
+    bool pass = true;
+    for (int row = param.src_row_start; row < param.src_row_end; row++) {
+        for (int col = param.src_col_start; col < param.src_col_end; col++) {
+            error = fabs((float)h_src[row * param.src_width + col] - (float)h_dest32[row * param.src_width + col]);
+            if (error > max_error) max_error = error;
+            if (error > 4E-4 && error_cnt < 25) {
+                printf("Error %.2E exceeded limit of %.2E\n", error, 4E-4);
+                error_cnt++;
+                pass = false;
+            }
+        }
+    }
+
+    if (pass) {
+        printf("dev_cpy_and_cast_array test passed, m = %d, col_offset = %d\n", param.src_height, param.src_col_start);
+    }
+    else {
+        printf("dev_cpy_and_cast_array test failed. Max error %.2E\n", max_error);
+    }
+}
+
+template void test_dev_cpy_and_cast_array<float, float>(CopyMatrixParam);
+template void test_dev_cpy_and_cast_array<float, __half>(CopyMatrixParam);
+template void test_dev_cpy_and_cast_array<__half, float>(CopyMatrixParam);
