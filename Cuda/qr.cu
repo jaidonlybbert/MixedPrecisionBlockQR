@@ -1647,8 +1647,6 @@ void test_h_block_qr(int m, int n, int r, float* A_in) {
     printf("\nTesting sequential block QR...\n");
     printf("Dimensions of A (m, n, r): (%d,%d,%d)\n", m, n, r);
 
-    float* A_in = h_generate_random_matrix<float>(m, n);
-
     float* Q = (float*)malloc(m * m * sizeof(float));
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
