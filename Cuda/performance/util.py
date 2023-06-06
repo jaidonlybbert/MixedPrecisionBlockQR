@@ -13,7 +13,7 @@ def getAverage(data, metrixIndex):
                 result[rows].append(value)
         except:
             print('{} is not a valid number'.format(item[metrixIndex]))
-    result = { key: sum(result[key]) // len(result[key]) for key in result }
+    result = { key: sum(result[key]) / len(result[key]) for key in result }
     return result
 
 def readFromLogFile(filename):
@@ -24,7 +24,10 @@ def readFromLogFile(filename):
         # filter invalid data
 
         runtime = getAverage(data, 2)
+        runtime = { key: runtime[key] / 1000 for key in runtime }
         flops = getAverage(data, 3)
-        print(runtime)
-        return runtime, flops
+        error = getAverage(data, 4)
+        error = { key: error[key] for key in error if error[key] < 1000 }
+        return runtime, flops, error
+
 

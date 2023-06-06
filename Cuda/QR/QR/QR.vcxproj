@@ -77,14 +77,13 @@
     <CudaCompile>
       <TargetMachinePlatform>64</TargetMachinePlatform>
       <CodeGeneration>compute_86,sm_86</CodeGeneration>
-      <Include>C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\QR</Include>
     </CudaCompile>
   </ItemDefinitionGroup>
   <ItemGroup>
     <CudaCompile Include="..\..\qr.cu" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="mmult.h" />
+    <ClInclude Include="..\..\mmult.cuh" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
