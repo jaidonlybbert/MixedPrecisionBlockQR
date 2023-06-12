@@ -2,6 +2,12 @@
 #include <stdio.h>
 #include <iostream>
 #include <assert.h>
+#include "cuda_runtime.h"
+#include "cuda_fp16.h"
+#include "device_launch_parameters.h"
+#include <cuda_runtime_api.h>
+#include <nvtx3/nvToolsExt.h>
+#include <mma.h>
 #include "mmult.cuh"
 
 template <typename T>
@@ -1228,7 +1234,3 @@ void test_dev_cpy_and_cast_array(CopyMatrixParam param) {
         printf("dev_cpy_and_cast_array test failed. Max error %.2E\n", max_error);
     }
 }
-
-template void test_dev_cpy_and_cast_array<float, float>(CopyMatrixParam);
-template void test_dev_cpy_and_cast_array<float, __half>(CopyMatrixParam);
-template void test_dev_cpy_and_cast_array<__half, float>(CopyMatrixParam);
