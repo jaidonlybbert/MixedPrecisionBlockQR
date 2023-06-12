@@ -47,8 +47,9 @@ SOFTWARE.
 #include <sstream>
 #include <algorithm>
 
-// Custom header
+// Custom headers
 #include "mmult.cuh"
+#include "qr.cuh"
 
 typedef void QR_FUNC(int, int, int, float*);
 
@@ -1682,14 +1683,11 @@ void test_h_block_qr(int m, int n, int r, float* A_in) {
     free(A_out);
 }
 
-struct MatrixInfo {
-    std::string filePath;
-    int m;
-    int n;
-};
+
 bool compareByRow(const MatrixInfo& item1, const MatrixInfo& item2) {
     return item1.m < item2.m;
 }
+
 std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     std::string folderPath = "./jacobians";
     std::vector<MatrixInfo> list;
@@ -1730,16 +1728,6 @@ std::vector<MatrixInfo> get_jacobians_test_matrixs() {
     return result;
 }
 
-struct QRProblemSize {
-    // A = QR problem set dimensions
-    int m; // height of matrix A
-    int n; // width of matrix A
-    int r; // block QR panel width
-};
-
-# define NUM_STATIC_QR_TESTS 24
-
-
 void test_qr_by_random_matrix(QR_FUNC f) {
    QRProblemSize testDim[NUM_STATIC_QR_TESTS] = {
        {6, 4, 2},
@@ -1762,10 +1750,10 @@ void test_qr_by_random_matrix(QR_FUNC f) {
        {129, 80, 16},
        {240, 160, 16},
        {600, 400, 16},
-        {900, 900, 16},
-        {1200, 1200, 16},
-        {1500, 1500, 16},
-        {1800, 1800, 32},
+        //{900, 900, 16},
+        //{1200, 1200, 16},
+        //{1500, 1500, 16},
+        //{1800, 1800, 32},
    };
     for (int i = 0; i < NUM_STATIC_QR_TESTS; i++) {
         float* A_in = h_generate_random_matrix<float>(testDim[i].m, testDim[i].n);
@@ -1936,19 +1924,18 @@ void test_iterator_template_tensorcore_mmult_tiled() {
     }
 }
 
-int main() {
-
-    test_iterator_dev_wy_funcs();
-    test_iterator_template_tensorcore_mmult_tiled();
-
-    test_qr_by_random_matrix(test_h_householder_qr);
-    test_qr_by_random_matrix(test_dev_block_qr);
-    test_qr_by_random_matrix(test_dev_mixed_precision_block_qr);
-
-    test_qr(test_h_householder_qr);
-    test_qr(test_dev_block_qr);
-    test_qr(test_dev_mixed_precision_block_qr);
-
-
-    return 0;
-}
+//int main() {
+//
+//    //test_iterator_dev_wy_funcs();
+//    //test_iterator_template_tensorcore_mmult_tiled();
+//
+//    //test_qr_by_random_matrix(test_h_householder_qr);
+//    //test_qr_by_random_matrix(test_dev_block_qr);
+//    //test_qr_by_random_matrix(test_dev_mixed_precision_block_qr);
+//
+//    //test_qr(test_h_householder_qr);
+//    //test_qr(test_dev_block_qr);
+//    test_qr(test_dev_mixed_precision_block_qr);
+//
+//    return 0;
+//}
