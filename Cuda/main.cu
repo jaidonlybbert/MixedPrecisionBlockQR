@@ -6,6 +6,7 @@
 #include <mma.h>
 
 #include "qr.cuh"
+#include "mmult.cuh"
 
 int main() {
 
