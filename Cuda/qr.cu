@@ -169,6 +169,7 @@ void h_wy_transform(float* h_A, float** h_Q, int m, int n, int global_offset, in
         // 2 * (Im - WY^T)w_i (matrix-vector product)
         for (int row = 0; row < (m - global_offset); row++) {
             float inner_product = 0;
+            // start at i, because w_i is zero before then
             for (int col = i; col < (m - global_offset); col++) {
                 inner_product += W_Yt[row * (m - global_offset) + col] * h_A[(global_offset + col + 1) * n + global_offset + i];
             }
