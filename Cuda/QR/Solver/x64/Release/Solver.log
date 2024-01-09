@@ -1,0 +1,111 @@
+﻿  Compiling CUDA source file ..\..\mmult.cu...
+  Compiling CUDA source file ..\..\qr.cu...
+  
+  C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver>"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\bin\nvcc.exe" -gencode=arch=compute_86,code=\"sm_86,compute_86\" --use-local-env -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\bin\HostX64\x64" -x cu   -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include"     --keep-dir x64\Release  -maxrregcount=0   --machine 64 --compile -cudart static    -DNDEBUG -D_CONSOLE -D_UNICODE -DUNICODE -Xcompiler "/EHsc /W3 /nologo /O2 /FS   /MD " -Xcompiler "/Fdx64\Release\vc143.pdb" -o C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver\x64\Release\mmult.cu.obj "C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cu" 
+  
+  C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver>"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\bin\nvcc.exe" -gencode=arch=compute_86,code=\"sm_86,compute_86\" --use-local-env -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\bin\HostX64\x64" -x cu   -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include"     --keep-dir x64\Release  -maxrregcount=0   --machine 64 --compile -cudart static    -DNDEBUG -D_CONSOLE -D_UNICODE -DUNICODE -Xcompiler "/EHsc /W3 /nologo /O2 /FS   /MD " -Xcompiler "/Fdx64\Release\vc143.pdb" -o C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver\x64\Release\qr.cu.obj "C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\qr.cu" 
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cu(880): error : argument of type "const char *" is incompatible with parameter of type "const __wchar_t *"
+        nvtxRangePushW(__func__);
+                       ^
+            detected during instantiation of "void h_launch_dev_tensorcore_mmult_tiled(T_A *, T_B *, T_C *, int, int, int) [with T_A=half, T_B=half, T_C=float]" at line 126 of C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh
+  
+  1 error detected in the compilation of "C:/Users/jaido/source/MixedPrecisionBlockQR/Cuda/mmult.cu".
+  mmult.cu
+C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\BuildCustomizations\CUDA 12.1.targets(799,9): error MSB3721: The command ""C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\bin\nvcc.exe" -gencode=arch=compute_86,code=\"sm_86,compute_86\" --use-local-env -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\bin\HostX64\x64" -x cu   -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include"     --keep-dir x64\Release  -maxrregcount=0   --machine 64 --compile -cudart static    -DNDEBUG -D_CONSOLE -D_UNICODE -DUNICODE -Xcompiler "/EHsc /W3 /nologo /O2 /FS   /MD " -Xcompiler "/Fdx64\Release\vc143.pdb" -o C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver\x64\Release\mmult.cu.obj "C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cu"" exited with code 2.
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\qr.cu(199): error : argument of type "const char *" is incompatible with parameter of type "const __wchar_t *"
+        nvtxRangePushW(__func__);
+                       ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\qr.cu(331): error : argument of type "const char *" is incompatible with parameter of type "const __wchar_t *"
+        nvtxRangePushW(__func__);
+                       ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\qr.cu(525): error : argument of type "const char *" is incompatible with parameter of type "const __wchar_t *"
+        nvtxRangePushW(__func__);
+                       ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(40): warning #489-D: function "h_generate_random_matrix<T>(int, int) [with T=float]" cannot be instantiated -- no template definition was supplied
+    template float* h_generate_random_matrix<float>(int, int);
+             ^
+  
+  Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(41): warning #489-D: function "h_generate_random_matrix<T>(int, int) [with T=__half]" cannot be instantiated -- no template definition was supplied
+    template __half* h_generate_random_matrix<__half>(int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(42): warning #489-D: function "h_generate_random_matrix<T>(int, int) [with T=unsigned char]" cannot be instantiated -- no template definition was supplied
+    template unsigned char* h_generate_random_matrix<unsigned char>(int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(43): warning #489-D: function "h_generate_random_matrix<T>(int, int) [with T=signed char]" cannot be instantiated -- no template definition was supplied
+    template signed char* h_generate_random_matrix<signed char>(int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(47): warning #489-D: function "h_mmult(T_A *, T_B *, T_C *, int, int, int) [with T_A=float, T_B=float, T_C=float]" cannot be instantiated -- no template definition was supplied
+    template void h_mmult<float, float, float>(float*, float*, float*, int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(48): warning #489-D: function "h_mmult(T_A *, T_B *, T_C *, int, int, int) [with T_A=__half, T_B=__half, T_C=float]" cannot be instantiated -- no template definition was supplied
+    template void h_mmult<__half, __half, float>(__half*, __half*, float*, int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(49): warning #489-D: function "h_mmult(T_A *, T_B *, T_C *, int, int, int) [with T_A=__half, T_B=__half, T_C=__half]" cannot be instantiated -- no template definition was supplied
+    template void h_mmult<__half, __half, __half>(__half*, __half*, __half*, int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(80): warning #489-D: function "dev_cpy_strided_array(T *, T *, int, int, int, int, int) [with T=float]" cannot be instantiated -- no template definition was supplied
+    template __declspec(__global__) void dev_cpy_strided_array<float>(float*, float*, int, int, int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(85): warning #489-D: function "dev_cpy_and_cast_array(T_DEST *, T_SRC *, CopyMatrixParam) [with T_SRC=float, T_DEST=__half]" cannot be instantiated -- no template definition was supplied
+    template __declspec(__global__) void dev_cpy_and_cast_array<float, __half>(__half*, float*, CopyMatrixParam);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(126): warning #489-D: function "h_launch_dev_tensorcore_mmult_tiled(T_A *, T_B *, T_C *, int, int, int) [with T_A=half, T_B=half, T_C=float]" cannot be instantiated -- no template definition was supplied
+    template void h_launch_dev_tensorcore_mmult_tiled<half, half, float>(half*, half*, float*, int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(132): warning #489-D: function "test_template_tensorcore_mmult_tiled<T_A,T_B,T_C>(int, int, int) [with T_A=__half, T_B=__half, T_C=__half]" cannot be instantiated -- no template definition was supplied
+    template void test_template_tensorcore_mmult_tiled<__half, __half, __half>(int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(133): warning #489-D: function "test_template_tensorcore_mmult_tiled<T_A,T_B,T_C>(int, int, int) [with T_A=__half, T_B=__half, T_C=float]" cannot be instantiated -- no template definition was supplied
+    template void test_template_tensorcore_mmult_tiled<__half, __half, float>(int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(134): warning #489-D: function "test_template_tensorcore_mmult_tiled<T_A,T_B,T_C>(int, int, int) [with T_A=unsigned char, T_B=unsigned char, T_C=int]" cannot be instantiated -- no template definition was supplied
+    template void test_template_tensorcore_mmult_tiled<unsigned char, unsigned char, int>(int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(135): warning #489-D: function "test_template_tensorcore_mmult_tiled<T_A,T_B,T_C>(int, int, int) [with T_A=signed char, T_B=signed char, T_C=int]" cannot be instantiated -- no template definition was supplied
+    template void test_template_tensorcore_mmult_tiled<signed char, signed char, int>(int, int, int);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(164): warning #489-D: function "h_launch_dev_cpy_and_cast_array(T_DEST *, T_SRC *, CopyMatrixParam) [with T_SRC=float, T_DEST=float]" cannot be instantiated -- no template definition was supplied
+    template void h_launch_dev_cpy_and_cast_array<float, float>(float*, float*, CopyMatrixParam);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(165): warning #489-D: function "h_launch_dev_cpy_and_cast_array(T_DEST *, T_SRC *, CopyMatrixParam) [with T_SRC=float, T_DEST=__half]" cannot be instantiated -- no template definition was supplied
+    template void h_launch_dev_cpy_and_cast_array<float, __half>(__half*, float*, CopyMatrixParam);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(166): warning #489-D: function "h_launch_dev_cpy_and_cast_array(T_DEST *, T_SRC *, CopyMatrixParam) [with T_SRC=__half, T_DEST=float]" cannot be instantiated -- no template definition was supplied
+    template void h_launch_dev_cpy_and_cast_array<__half, float>(float*, __half*, CopyMatrixParam);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(171): warning #489-D: function "test_dev_cpy_and_cast_array<T_SRC,T_DEST>(CopyMatrixParam) [with T_SRC=float, T_DEST=float]" cannot be instantiated -- no template definition was supplied
+    template void test_dev_cpy_and_cast_array<float, float>(CopyMatrixParam);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(172): warning #489-D: function "test_dev_cpy_and_cast_array<T_SRC,T_DEST>(CopyMatrixParam) [with T_SRC=float, T_DEST=__half]" cannot be instantiated -- no template definition was supplied
+    template void test_dev_cpy_and_cast_array<float, __half>(CopyMatrixParam);
+             ^
+  
+C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\mmult.cuh(173): warning #489-D: function "test_dev_cpy_and_cast_array<T_SRC,T_DEST>(CopyMatrixParam) [with T_SRC=__half, T_DEST=float]" cannot be instantiated -- no template definition was supplied
+    template void test_dev_cpy_and_cast_array<__half, float>(CopyMatrixParam);
+             ^
+  
+  3 errors detected in the compilation of "C:/Users/jaido/source/MixedPrecisionBlockQR/Cuda/qr.cu".
+  qr.cu
+C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Microsoft\VC\v170\BuildCustomizations\CUDA 12.1.targets(799,9): error MSB3721: The command ""C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\bin\nvcc.exe" -gencode=arch=compute_86,code=\"sm_86,compute_86\" --use-local-env -ccbin "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.35.32215\bin\HostX64\x64" -x cu   -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver -IC:\Users\jaido\source\MixedPrecisionBlockQR\Cuda -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include" -I"C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.1\include"     --keep-dir x64\Release  -maxrregcount=0   --machine 64 --compile -cudart static    -DNDEBUG -D_CONSOLE -D_UNICODE -DUNICODE -Xcompiler "/EHsc /W3 /nologo /O2 /FS   /MD " -Xcompiler "/Fdx64\Release\vc143.pdb" -o C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\QR\Solver\x64\Release\qr.cu.obj "C:\Users\jaido\source\MixedPrecisionBlockQR\Cuda\qr.cu"" exited with code 2.
