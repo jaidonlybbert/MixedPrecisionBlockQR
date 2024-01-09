@@ -1,6 +1,8 @@
 __pycache__
 venv
 launch.json
+build/*.user
+build/*.tcl
 build/*.vcxproj
 build/*.filters
 build/*.txt

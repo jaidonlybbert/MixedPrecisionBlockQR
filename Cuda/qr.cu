@@ -30,6 +30,7 @@ SOFTWARE.
 #include "cuda_runtime.h"
 #include "cuda_fp16.h"
 #include "device_launch_parameters.h"
+#include "helper_cuda.h"
 #include <cuda_runtime_api.h>
 #include <nvtx3/nvToolsExt.h>
 #include <mma.h>
@@ -482,12 +483,15 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
 
+    // Workspace in shared memory to write running matrix product to
     __shared__ float ads[TILE_WIDTH][TILE_WIDTH];
     __shared__ float bds[TILE_WIDTH][TILE_WIDTH];
 
     int ty = threadIdx.y, tx = threadIdx.x;
 
     int phases = ceil(panel_width / (float)TILE_WIDTH);
+
+    printf("row, col", row, col);
 
     float pval = 0.0;
     for (int i = 0; i < phases; i++) {
@@ -496,7 +500,7 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
         }
 
         if ((i * TILE_WIDTH + ty < panel_width) && (col < W_Yt_dim)) {
-            bds[tx][ty] = dev_Y[col * panel_width + (i * TILE_WIDTH) + ty];
+            bds[tx][ty] = dev_Y[(i * TILE_WIDTH + ty) * W_Yt_dim + col];
         }
 
         __syncthreads();
@@ -529,10 +533,10 @@ void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int globa
     float* dev_z;
     float* dev_W_Yt;
 
-    cudaMalloc(&dev_W, (m - global_offset) * panel_width * sizeof(float));
-    cudaMalloc(&dev_Y, (m - global_offset) * panel_width * sizeof(float));
-    cudaMalloc(&dev_z, (m - global_offset) * sizeof(float));
-    cudaMalloc(&dev_W_Yt, (m - global_offset) * (m - global_offset) * sizeof(float));
+    checkCudaErrors(cudaMalloc(&dev_W, (m - global_offset) * panel_width * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&dev_Y, (m - global_offset) * panel_width * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&dev_z, (m - global_offset) * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&dev_W_Yt, (m - global_offset) * (m - global_offset) * sizeof(float)));
 
     // Dimensions of final result Im - WY^T, square
     int W_Yt_dim = m - global_offset;
@@ -554,7 +558,7 @@ void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int globa
     dim3 vec_blockDim(1, VECTOR_OP_1D_BLOCK_WIDTH, 1);
 
     dev_wy_init << <gridDim, blockDim >> > (dev_A, dev_Y, dev_W, global_offset, n, W_Yt_dim, panel_width);
-    cudaDeviceSynchronize();
+    checkCudaErrors(cudaDeviceSynchronize());
 
     // Iterate over columns of panel and update W, Y
     for (int i = 1; i < panel_width; i++) { // cols of panel
@@ -566,24 +570,24 @@ void dev_wy_transform(float* dev_A, float** dev_panel_Q, int m, int n, int globa
 
         // (Im - WY^T)
         dev_wy_compute_Im_sub_W_Yt<<<mtx_gridDim, mtx_blockDim >>>(dev_W_Yt, dev_W, dev_Y, panel_width, i, W_Yt_dim);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // 2 * (Im - WY^T)w_i (matrix-vector product)
         dev_wy_compute_z<<<vec_gridDim, vec_blockDim >>>(dev_z, dev_W_Yt, dev_A, m, n, global_offset, W_Yt_dim, i);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // Copy z & householder vector (w) to W & Y matrices
         dev_wy_copy_z_and_w << <vec_gridDim, vec_blockDim >> > (dev_z, dev_W, dev_Y, dev_A, m, n, W_Yt_dim, i, panel_width, global_offset);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
     }
 
     // Im - WY^T
     dev_wy_compute_Im_sub_W_Yt<<<mtx_gridDim, mtx_blockDim>>>(dev_W_Yt, dev_W, dev_Y, panel_width, panel_width, W_Yt_dim);
-    cudaDeviceSynchronize();
+    checkCudaErrors(cudaDeviceSynchronize());
 
-    cudaFree(dev_W);
-    cudaFree(dev_Y);
-    cudaFree(dev_z);
+    checkCudaErrors(cudaFree(dev_W));
+    checkCudaErrors(cudaFree(dev_Y));
+    checkCudaErrors(cudaFree(dev_z));
     //free(W_Yt);
     *dev_panel_Q = dev_W_Yt;
     nvtxRangePop();
@@ -891,16 +895,16 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         float* dev_A_panel_result;
         float* dev_Q_result;
 
-        cudaMalloc(&dev_A, m * n * sizeof(float));
-        cudaMalloc(&dev_Q, m * m * sizeof(float));
-        cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float));
-        cudaMalloc(&dev_A_panel_result, (m - lambda) * (n - tau) * sizeof(float));
-        cudaMalloc(&dev_Q_result, m * m * sizeof(float));
+        checkCudaErrors(cudaMalloc(&dev_A, m * n * sizeof(float)));
+        checkCudaErrors(cudaMalloc(&dev_Q, m * m * sizeof(float)));
+        checkCudaErrors(cudaMalloc(&dev_panel_Q, (m - lambda) * (m - lambda) * sizeof(float)));
+        checkCudaErrors(cudaMalloc(&dev_A_panel_result, (m - lambda) * (n - tau) * sizeof(float)));
+        checkCudaErrors(cudaMalloc(&dev_Q_result, m * m * sizeof(float)));
 
-        cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
-        cudaMemcpy(dev_Q_result, Q, m * m * sizeof(float), cudaMemcpyHostToDevice);
+        checkCudaErrors(cudaMemcpy(dev_A, A, m * n * sizeof(float), cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(dev_panel_Q, panel_Q, (m - lambda) * (m - lambda) * sizeof(float), cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(dev_Q, Q, m * m * sizeof(float), cudaMemcpyHostToDevice));
+        checkCudaErrors(cudaMemcpy(dev_Q_result, Q, m * m * sizeof(float), cudaMemcpyHostToDevice));
 
         dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
@@ -909,29 +913,29 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         shared_mem_mmult_in_place_transpose_a<<<GridDim, BlockDim>>>(dev_A_panel_result, dev_panel_Q, dev_A,
                                                         (m - lambda), (n - tau), (m - lambda), m, n);
 
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
         dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
         dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
                                                                   (m - lambda), (n - tau), BOTTOM_RIGHT);
 
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
         dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> >(dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
 
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
-        cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost);
-        cudaMemcpy(Q, dev_Q_result, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+        checkCudaErrors(cudaMemcpy(A, dev_A, m * n * sizeof(float), cudaMemcpyDeviceToHost));
+        checkCudaErrors(cudaMemcpy(Q, dev_Q_result, m * m * sizeof(float), cudaMemcpyDeviceToHost));
 
-        cudaFree(dev_A);
-        cudaFree(dev_Q);
-        cudaFree(dev_panel_Q);
-        cudaFree(dev_A_panel_result);
-        cudaFree(dev_Q_result);
+        checkCudaErrors(cudaFree(dev_A));
+        checkCudaErrors(cudaFree(dev_Q));
+        checkCudaErrors(cudaFree(dev_panel_Q));
+        checkCudaErrors(cudaFree(dev_A_panel_result));
+        checkCudaErrors(cudaFree(dev_Q_result));
 
         free(panel_Q);
 
@@ -957,13 +961,13 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
     size_t size_Q = (m * m * sizeof(float));
 
     // Allocate memory on device
-    cudaMalloc(&dev_A, size_A);
-    cudaMalloc(&dev_Q, size_Q);
-    cudaMalloc(&dev_Q_result, size_Q);
+    checkCudaErrors(cudaMalloc(&dev_A, size_A));
+    checkCudaErrors(cudaMalloc(&dev_Q, size_Q));
+    checkCudaErrors(cudaMalloc(&dev_Q_result, size_Q));
 
     // Move matrix A and Q (initialized as identity) to device
-    cudaMemcpy(dev_Q, Q, size_Q, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_Q_result, Q, size_Q, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(dev_Q, Q, size_Q, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(dev_Q_result, Q, size_Q, cudaMemcpyHostToDevice));
 
     int lambda = 0;
     while (lambda < n) { // panel starts at lambda
@@ -973,11 +977,11 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
         // R is stored in upper triangular portion of dev_A
         h_householder_qr(A, m, n, lambda, tau - lambda);
 
-        cudaMemcpy(dev_A, A, size_A, cudaMemcpyHostToDevice);
+        checkCudaErrors(cudaMemcpy(dev_A, A, size_A, cudaMemcpyHostToDevice));
 
         // Allocate memory for A result
         size_t size_panel_A = (m - lambda) * (n - tau) * sizeof(float);
-        cudaMalloc(&dev_A_panel_result, size_panel_A);
+        checkCudaErrors(cudaMalloc(&dev_A_panel_result, size_panel_A));
 
         // Perform WY transform to construct Q for panel from householder vectors stored in matrix A
         dev_wy_transform(dev_A, &dev_panel_Q, m, n, lambda, tau - lambda);
@@ -989,37 +993,37 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
         shared_mem_mmult_in_place_transpose_a << <GridDim, BlockDim >> > (dev_A_panel_result, dev_panel_Q, dev_A,
             (m - lambda), (n - tau), (m - lambda), m, n);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // Copy panel A result to matrix A
         dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
         dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
         dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
             (m - lambda), (n - tau), BOTTOM_RIGHT);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // Update Q matrix with panel Q
         dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
         dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
         dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> > (dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // Overwrite Q with result
-        cudaMemcpy(dev_Q, dev_Q_result, size_Q, cudaMemcpyDeviceToDevice);
+        checkCudaErrors(cudaMemcpy(dev_Q, dev_Q_result, size_Q, cudaMemcpyDeviceToDevice));
 
-        cudaFree(dev_panel_Q);
-        cudaFree(dev_A_panel_result);
-        cudaMemcpy(A, dev_A, size_A, cudaMemcpyDeviceToHost);
+        checkCudaErrors(cudaFree(dev_panel_Q));
+        checkCudaErrors(cudaFree(dev_A_panel_result));
+        checkCudaErrors(cudaMemcpy(A, dev_A, size_A, cudaMemcpyDeviceToHost));
 
         // increment panel offset
         lambda = tau;
     }
 
-    cudaMemcpy(Q, dev_Q, size_Q, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(Q, dev_Q, size_Q, cudaMemcpyDeviceToHost));
 
-    cudaFree(dev_A);
-    cudaFree(dev_Q);
-    cudaFree(dev_Q_result);
+    checkCudaErrors(cudaFree(dev_A));
+    checkCudaErrors(cudaFree(dev_Q));
+    checkCudaErrors(cudaFree(dev_Q_result));
 }
 
 void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
@@ -1039,13 +1043,13 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
     size_t size_Q = (m * m * sizeof(float));
 
     // Allocate memory on device
-    cudaMalloc(&dev_A, size_A);
-    cudaMalloc(&dev_Q, size_Q);
-    cudaMalloc(&dev_Q_result, size_Q);
+    checkCudaErrors(cudaMalloc(&dev_A, size_A));
+    checkCudaErrors(cudaMalloc(&dev_Q, size_Q));
+    checkCudaErrors(cudaMalloc(&dev_Q_result, size_Q));
 
     // Move matrix A and Q (initialized as identity) to device
-    cudaMemcpy(dev_Q, Q, size_Q, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_Q_result, Q, size_Q, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(dev_Q, Q, size_Q, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(dev_Q_result, Q, size_Q, cudaMemcpyHostToDevice));
 
     int lambda = 0;
     while (lambda < n) { // panel starts at lambda
@@ -1055,11 +1059,11 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
         // R is stored in upper triangular portion of dev_A
         h_householder_qr(A, m, n, lambda, tau - lambda);
 
-        cudaMemcpy(dev_A, A, size_A, cudaMemcpyHostToDevice);
+        checkCudaErrors(cudaMemcpy(dev_A, A, size_A, cudaMemcpyHostToDevice));
 
         // Allocate memory for A result
         size_t size_panel_A = (m - lambda) * (n - tau) * sizeof(float);
-        cudaMalloc(&dev_A_panel_result, size_panel_A);
+        checkCudaErrors(cudaMalloc(&dev_A_panel_result, size_panel_A));
 
         // Perform WY transform to construct Q for panel from householder vectors stored in matrix A
         dev_wy_transform(dev_A, &dev_panel_Q, m, n, lambda, tau - lambda);
@@ -1071,14 +1075,14 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
         dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
         shared_mem_mmult_in_place_transpose_a << <GridDim, BlockDim >> > (dev_A_panel_result, dev_panel_Q, dev_A,
             (m - lambda), (n - tau), (m - lambda), m, n);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // Copy panel A result to matrix A
         dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
         dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
         dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
             (m - lambda), (n - tau), BOTTOM_RIGHT);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // Update Q matrix with panel Q
         /*
@@ -1099,12 +1103,12 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
         size_t q_padded_size = q_width_padded * q_height_padded * sizeof(__half);
         size_t q_panel_padded_size = q_panel_width * q_panel_width * sizeof(__half);
         size_t q_panel_result_size = q_height_padded * q_panel_width_padded * sizeof(float);
-        cudaMalloc(&q_padded, q_padded_size);
-        cudaMalloc(&q_panel_padded, q_panel_padded_size);
-        cudaMalloc(&q_panel_result, q_panel_result_size);
-        cudaMemset(q_padded, 0, q_padded_size);
-        cudaMemset(q_panel_padded, 0, q_panel_padded_size);
-        cudaMemset(q_panel_result, 0, q_panel_result_size);
+        checkCudaErrors(cudaMalloc(&q_padded, q_padded_size));
+        checkCudaErrors(cudaMalloc(&q_panel_padded, q_panel_padded_size));
+        checkCudaErrors(cudaMalloc(&q_panel_result, q_panel_result_size));
+        checkCudaErrors(cudaMemset(q_padded, 0, q_padded_size));
+        checkCudaErrors(cudaMemset(q_panel_padded, 0, q_panel_padded_size));
+        checkCudaErrors(cudaMemset(q_panel_result, 0, q_panel_result_size));
 
         // Initialize parameters to copy and cast q matrix to q_padded matrix
         CopyMatrixParam p;
@@ -1143,10 +1147,10 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
         //float* q_panel_checkpoint_f = (float*)malloc(q_panel_width * q_panel_width * sizeof(float));
         //__half* q_checkpoint_h = (__half*)malloc(q_height_padded * q_width_padded * sizeof(__half));
         //__half* q_panel_checkpoint_h = (__half*)malloc(q_panel_width_padded * q_panel_width_padded * sizeof(__half));
-        //cudaMemcpy(q_checkpoint_f, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
-        //cudaMemcpy(q_panel_checkpoint_f, dev_panel_Q, q_panel_width * q_panel_width * sizeof(float), cudaMemcpyDeviceToHost);
-        //cudaMemcpy(q_checkpoint_h, q_padded, q_width_padded * q_height_padded * sizeof(__half), cudaMemcpyDeviceToHost);
-        //cudaMemcpy(q_panel_checkpoint_h, q_panel_padded, q_panel_width_padded * q_panel_width_padded * sizeof(__half), cudaMemcpyDeviceToHost);
+        //checkCudaErrors(cudaMemcpy(q_checkpoint_f, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost));
+        //checkCudaErrors(cudaMemcpy(q_panel_checkpoint_f, dev_panel_Q, q_panel_width * q_panel_width * sizeof(float), cudaMemcpyDeviceToHost));
+        //checkCudaErrors(cudaMemcpy(q_checkpoint_h, q_padded, q_width_padded * q_height_padded * sizeof(__half), cudaMemcpyDeviceToHost));
+        //checkCudaErrors(cudaMemcpy(q_panel_checkpoint_h, q_panel_padded, q_panel_width_padded * q_panel_width_padded * sizeof(__half), cudaMemcpyDeviceToHost));
         
         // Configure grid of "warp blocks" which overlay output
         int warp_grid_height = q_height_padded / TC_TILE_M + (q_height_padded % TC_TILE_M != 0);
@@ -1163,7 +1167,7 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
         dim3 blockDim5(TC_MMULT_THREAD_BLOCK_WIDTH, TC_MMULT_THREAD_BLOCK_HEIGHT, 1);
 
         dev_tensorcore_mmult_tiled<__half, __half, float><<<gridDim5, blockDim5>>>(q_panel_result, q_padded, q_panel_padded, q_height_padded, q_panel_width_padded, q_panel_width_padded);
-        cudaDeviceSynchronize();
+        checkCudaErrors(cudaDeviceSynchronize());
 
         // Initialize parameters to copy Q panel result to dev_Q
         CopyMatrixParam p3;
@@ -1180,23 +1184,23 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
 
         h_launch_dev_cpy_and_cast_array<float, float>(dev_Q, q_panel_result, p3);
 
-        cudaFree(dev_panel_Q);
-        cudaFree(dev_A_panel_result);
-        cudaFree(q_padded);
-        cudaFree(q_panel_padded);
-        cudaFree(q_panel_result);
+        checkCudaErrors(cudaFree(dev_panel_Q));
+        checkCudaErrors(cudaFree(dev_A_panel_result));
+        checkCudaErrors(cudaFree(q_padded));
+        checkCudaErrors(cudaFree(q_panel_padded));
+        checkCudaErrors(cudaFree(q_panel_result));
 
-        cudaMemcpy(A, dev_A, size_A, cudaMemcpyDeviceToHost);
+        checkCudaErrors(cudaMemcpy(A, dev_A, size_A, cudaMemcpyDeviceToHost));
 
         // increment panel offset
         lambda = tau;
     }
 
-    cudaMemcpy(Q, dev_Q, size_Q, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(Q, dev_Q, size_Q, cudaMemcpyDeviceToHost));
 
-    cudaFree(dev_A);
-    cudaFree(dev_Q);
-    cudaFree(dev_Q_result);
+    checkCudaErrors(cudaFree(dev_A));
+    checkCudaErrors(cudaFree(dev_Q));
+    checkCudaErrors(cudaFree(dev_Q_result));
 }
 
 void test_dev_householder_qr(int m, int n, int r) {
@@ -1213,11 +1217,11 @@ void test_dev_householder_qr(int m, int n, int r) {
     float* dev_A;
     float* dev_Q; // Matrix Q in A=QR
 
-    //cudaMalloc(&dev_Q, m * m * sizeof(float));
-    cudaMalloc(&dev_A, (m+1) * n * sizeof(float));
+    //checkCudaErrors(cudaMalloc(&dev_Q, m * m * sizeof(float)));
+    checkCudaErrors(cudaMalloc(&dev_A, (m+1) * n * sizeof(float)));
 
     // Copy input matrix to device Global memory
-    cudaMemcpy(dev_A, h_A_in, m * n * sizeof(float), cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(dev_A, h_A_in, m * n * sizeof(float), cudaMemcpyHostToDevice));
 
     // Call kernel to collaboratively copy input matrix from Global memory to Shared memory
     dim3 DimGrid(1, 1, 1);
@@ -1225,13 +1229,13 @@ void test_dev_householder_qr(int m, int n, int r) {
     // Time execution of the following kernel call
     clock_t cycles = clock(); // Time how long the QR function takes to execute
     dev_householder_qr <<<DimGrid, DimBlock >> > (dev_A, m, n, 0);
-    cudaDeviceSynchronize();
+    checkCudaErrors(cudaDeviceSynchronize());
     cycles = clock() - cycles;
     float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
-    cudaMemcpy(h_A_out, dev_A, (m+1) * n * sizeof(float), cudaMemcpyDeviceToHost);
-    //cudaMemcpy(h_Q_out, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_A_out, dev_A, (m+1) * n * sizeof(float), cudaMemcpyDeviceToHost));
+    //checkCudaErrors(cudaMemcpy(h_Q_out, dev_Q, m * m * sizeof(float), cudaMemcpyDeviceToHost));
 
     h_q_backward_accumulation(h_A_out, &h_Q_out, m, n);
     //h_wy_transform(h_A_out, &h_Q_out, m, n, 0, n);
@@ -1424,13 +1428,13 @@ void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_
     float* dev_Y;
     float* dev_WYt;
 
-    cudaMalloc(&dev_W, W_size);
-    cudaMalloc(&dev_Y, Y_size);
-    cudaMalloc(&dev_WYt, W_Yt_size);
+    checkCudaErrors(cudaMalloc(&dev_W, W_size));
+    checkCudaErrors(cudaMalloc(&dev_Y, Y_size));
+    checkCudaErrors(cudaMalloc(&dev_WYt, W_Yt_size));
 
-    cudaMemcpy(dev_W, W, W_size, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_Y, Y, Y_size, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_WYt, dev_result_W_Yt, W_Yt_size, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(dev_W, W, W_size, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(dev_Y, Y, Y_size, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(dev_WYt, dev_result_W_Yt, W_Yt_size, cudaMemcpyHostToDevice));
 
     // Configure grid
     dim3 gridDim((int)ceil((float)W_Yt_dim / TILE_WIDTH), (int)ceil((float)W_Yt_dim / TILE_WIDTH), 1);
@@ -1439,11 +1443,13 @@ void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_
     // Launch kernel
     dev_wy_compute_Im_sub_W_Yt << <gridDim, blockDim >> > (dev_WYt, dev_W, dev_Y, panel_width, current_column, W_Yt_dim);
 
-    cudaDeviceSynchronize();
+    checkCudaErrors(cudaDeviceSynchronize());
 
-    cudaMemcpy(W, dev_W, W_size, cudaMemcpyDeviceToHost);
-    cudaMemcpy(Y, dev_Y, Y_size, cudaMemcpyDeviceToHost);
-    cudaMemcpy(dev_result_W_Yt, dev_WYt, W_Yt_size, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(W, dev_W, W_size, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(Y, dev_Y, Y_size, cudaMemcpyDeviceToHost));
+    checkCudaErrors(cudaMemcpy(dev_result_W_Yt, dev_WYt, W_Yt_size, cudaMemcpyDeviceToHost));
+
+    checkCudaErrors(cudaDeviceSynchronize());
 
     // Run CPU version for comparison
     for (int row = 0; row < W_Yt_dim; row++) { // rows of W_Yt
@@ -1486,9 +1492,9 @@ void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_
     free(dev_result_W_Yt);
     free(h_result_W_Yt);
 
-    cudaFree(dev_W);
-    cudaFree(dev_Y);
-    cudaFree(dev_WYt);
+    checkCudaErrors(cudaFree(dev_W));
+    checkCudaErrors(cudaFree(dev_Y));
+    checkCudaErrors(cudaFree(dev_WYt));
 
 }
 
@@ -1516,9 +1522,9 @@ void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
     float* dev_W_Yt;
     float* dev_z;
 
-    cudaMalloc(&dev_A_in, A_size);
-    cudaMalloc(&dev_W_Yt, W_Yt_size);
-    cudaMalloc(&dev_z, w_size);
+    checkCudaErrors(cudaMalloc(&dev_A_in, A_size));
+    checkCudaErrors(cudaMalloc(&dev_W_Yt, W_Yt_size));
+    checkCudaErrors(cudaMalloc(&dev_z, w_size));
 
     // initialize matrix A
     for (int i = 0; i < m + 1; i++) {
@@ -1534,16 +1540,16 @@ void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
         }
     }
 
-    cudaMemcpy(dev_A_in, h_A_in, A_size, cudaMemcpyHostToDevice);
-    cudaMemcpy(dev_W_Yt, h_W_Yt, W_Yt_size, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMemcpy(dev_A_in, h_A_in, A_size, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(dev_W_Yt, h_W_Yt, W_Yt_size, cudaMemcpyHostToDevice));
 
     dim3 gridDim(1, (int)ceil((float)W_Yt_dim / VECTOR_OP_1D_BLOCK_WIDTH), 1);
     dim3 blockDim(1, VECTOR_OP_1D_BLOCK_WIDTH, 1);
     dev_wy_compute_z<<<gridDim, blockDim>>>(dev_z, dev_W_Yt, dev_A_in, m, n, global_offset, W_Yt_dim, column_offset);
 
-    cudaDeviceSynchronize();
+    checkCudaErrors(cudaDeviceSynchronize());
 
-    cudaMemcpy(dev_result_z, dev_z, w_size, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(dev_result_z, dev_z, w_size, cudaMemcpyDeviceToHost));
 
     // Compute with CPU for comparison
     for (int row = 0; row < W_Yt_dim; row++) {
@@ -1574,9 +1580,9 @@ void test_dev_wy_compute_z(int m, int n, int global_offset, int column_offset) {
     free(h_A_in);
     free(h_W_Yt);
 
-    cudaFree(dev_A_in);
-    cudaFree(dev_W_Yt);
-    cudaFree(dev_z);
+    checkCudaErrors(cudaFree(dev_A_in));
+    checkCudaErrors(cudaFree(dev_W_Yt));
+    checkCudaErrors(cudaFree(dev_z));
 }
 
 void test_dev_wy_transform(int m, int n, int panel_width, int global_offset) {
@@ -1605,12 +1611,12 @@ void test_dev_wy_transform(int m, int n, int panel_width, int global_offset) {
     float* dev_A;
     float* dev_panel_Q;
 
-    cudaMalloc(&dev_A, A_size);
-    cudaMemcpy(dev_A, h_A, A_size, cudaMemcpyHostToDevice);
+    checkCudaErrors(cudaMalloc(&dev_A, A_size));
+    checkCudaErrors(cudaMemcpy(dev_A, h_A, A_size, cudaMemcpyHostToDevice));
 
     dev_wy_transform(dev_A, &dev_panel_Q, m, n, global_offset, panel_width);
 
-    cudaMemcpy(h_dev_result_panel_Q, dev_panel_Q, panel_Q_size, cudaMemcpyDeviceToHost);
+    checkCudaErrors(cudaMemcpy(h_dev_result_panel_Q, dev_panel_Q, panel_Q_size, cudaMemcpyDeviceToHost));
 
     h_wy_transform(h_A, &h_result_panel_Q, m, n, global_offset, panel_width);
 
@@ -1636,8 +1642,8 @@ void test_dev_wy_transform(int m, int n, int panel_width, int global_offset) {
     free(h_result_panel_Q);
     free(h_dev_result_panel_Q);
 
-    cudaFree(dev_A);
-    cudaFree(dev_panel_Q);
+    checkCudaErrors(cudaFree(dev_A));
+    checkCudaErrors(cudaFree(dev_panel_Q));
 }
 
 
@@ -1855,7 +1861,7 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
 
     h_strip_R_from_A((float*)A_out, R, m, n);
 
-    int precision_bits = 11; // Bits contributing to precision for IEEE-754 FP32
+    int precision_bits = 11; // Bits contributing to precision for IEEE-754 FP16
     float backward_error = h_backward_error((float*)A_in, R, Q, m, n, precision_bits);
     float error2 = h_q_error(Q, m, precision_bits);
     float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
