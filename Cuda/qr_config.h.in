@@ -1,0 +1,2 @@
+// Configuration options for QR project
+#define QR_JACOBIAN_PATH "@QR_JACOBIAN_PATH@"

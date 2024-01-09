@@ -1,15 +1,24 @@
 cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(MixedPrecisionBlockQR LANGUAGES CXX CUDA)
 
+# Extract input data archive (jacobian test data)
+set(QR_DATA_PATH "${CMAKE_HOME_DIRECTORY}/data")
+set(QR_JACOBIAN_PATH "${QR_DATA_PATH}/jacobians")
+file(ARCHIVE_EXTRACT 
+	INPUT "${QR_DATA_PATH}/okvis_euroc_MH_05_jacobians.tar.gz"
+	DESTINATION "${QR_JACOBIAN_PATH}"
+	)
+configure_file(${CMAKE_HOME_DIRECTORY}/Cuda/qr_config.h.in ${CMAKE_HOME_DIRECTORY}/Cuda/qr_config.h)
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-	set(CMAKE_CUDA_ARCHITECTURES 52)
+	set(CMAKE_CUDA_ARCHITECTURES 86)
 endif()
 
 # Add the executable
-add_executable(MixedPrecisionBlockQR Cuda/qr.cu)
+add_executable(MixedPrecisionBlockQR Cuda/qr.cu Cuda/mmult.cu Cuda/main.cu)
 
 # Request that MixedPrecisionBlockQR is built with -std=c++20
 target_compile_features(MixedPrecisionBlockQR PUBLIC cxx_std_20)

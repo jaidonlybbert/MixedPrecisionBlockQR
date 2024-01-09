@@ -48,6 +48,7 @@ SOFTWARE.
 #include <algorithm>
 
 // Custom headers
+#include "qr_config.h"
 #include "mmult.cuh"
 #include "qr.cuh"
 
@@ -1689,7 +1690,7 @@ bool compareByRow(const MatrixInfo& item1, const MatrixInfo& item2) {
 }
 
 std::vector<MatrixInfo> get_jacobians_test_matrixs() {
-    std::string folderPath = "./jacobians";
+    std::string folderPath = QR_JACOBIAN_PATH;
     std::vector<MatrixInfo> list;
     for (int i = 100; i <= 22500; i += 100) {
         std::ostringstream oss;
