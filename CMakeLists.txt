@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.8 FATAL_ERROR)
 project(MixedPrecisionBlockQR LANGUAGES CXX CUDA)
+# Create a "compile_commands.json" file to inform LSP about build configuration
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 add_subdirectory(${CMAKE_HOME_DIRECTORY}/tests)
 
 # Extract input data archive (jacobian test data)
@@ -15,7 +17,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-	set(CMAKE_CUDA_ARCHITECTURES 86)
+	set(CMAKE_CUDA_ARCHITECTURES 50)
 endif()
 
 # Add the executable
@@ -30,3 +32,4 @@ target_compile_features(MixedPrecisionBlockQR PUBLIC cxx_std_20)
 # project folder to be built with -dc as the member functions 
 # could be called by other libraries and executables
 set_target_properties(MixedPrecisionBlockQR PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
