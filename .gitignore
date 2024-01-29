@@ -11,4 +11,6 @@ build/*/
 build/*.sln
 build/*.cmake
 build/*.h
+.cache
 Cuda/qr_config.h
+compile_commands.json
