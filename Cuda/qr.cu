@@ -103,7 +103,13 @@ float h_qr_flops_per_second(float time_ms, int m, int n) {
     /*
     * Computes FLOPs / second for householder QR given matrix dimensions and execution time
     */
-    return (4. * (pow<float>(m, 2) * n - m * pow<float>(n, 2) + pow<float>(n, 3) / 3.)) / (time_ms / 1000);
+	float mf = static_cast<float>(m);
+	float nf = static_cast<float>(n);
+	float flops = 4.0f * pow<float>(mf, 2.f) * nf;
+	flops -= mf * pow<float>(nf, 2.f);
+	flops += pow<float>(nf, 3.f) / 3.0f;
+	flops /= time_ms / 1000.0f;
+    return flops;
 }
 
 float h_backward_error(float* A, float* R, float* Q, int m, int n, int precision_bits) {
@@ -322,7 +328,7 @@ void h_q_backward_accumulation(float* h_A, float** h_Q, int m, int n) {
         // Q_j:m,j:m = Q_j:m,j:m - 2 * V @ ((V^T) @ Q_j:m,j:m)
         for (int row = j; row < m; row++) {
             for (int col = j; col < m; col++) {
-                (*h_Q)[row * m + col] = (*h_Q)[row * m + col] - 2.0 * h_A[(row + 1) * n + j] * temp[col - j];
+                (*h_Q)[row * m + col] = (*h_Q)[row * m + col] - 2.0f * h_A[(row + 1) * n + j] * temp[col - j];
             }
         }
     }
@@ -491,7 +497,7 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
 
     int phases = ceil(panel_width / (float)TILE_WIDTH);
 
-    printf("row, col", row, col);
+    printf("row, col\n");
 
     float pval = 0.0;
     for (int i = 0; i < phases; i++) {
@@ -708,8 +714,8 @@ void read_euroc_jacobian(std::string filename, int* rows, int* cols, float** mat
     getline(fin, line);
 
 //     std::cout << line << std::endl;
-    int start = line.find(" ");
-    int end = line.find(" ");
+    int start = static_cast<int>(line.find(" "));
+    int end = static_cast<int>(line.find(" "));
 
     std::string rows_str = line.substr(0, start);
     std::string cols_str = line.substr(start + 1, end);
@@ -760,7 +766,7 @@ void read_euroc_jacobian(std::string filename, int* rows, int* cols, float** mat
 
         int row_idx = std::stoi(row_idx_str);
         int col_idx = std::stoi(col_idx_str);
-        double val = std::stod(val_str);
+        float val = std::stof(val_str);
 
         (*matrix)[row_idx * (*cols) + col_idx] = val;
         linecount++;
@@ -859,7 +865,7 @@ void dev_cpy_panel_result_a(float* dev_A, float* dev_A_panel_result, int m, int 
     int row = blockIdx.y * blockDim.y + threadIdx.y + lambda;
     int col = blockIdx.x * blockDim.x + threadIdx.x + tau;
 
-    int panel_a_height = (m - lambda); // panel_q is square matrix, shrinks for subsequent panels
+//    int panel_a_height = (m - lambda); // panel_q is square matrix, shrinks for subsequent panels
     int panel_a_width = (n - tau);
 
     dev_A[row * n + col] = dev_A_panel_result[(row - lambda) * (panel_a_width) + (col - tau)];
@@ -907,7 +913,9 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         checkCudaErrors(cudaMemcpy(dev_Q_result, Q, m * m * sizeof(float), cudaMemcpyHostToDevice));
 
         dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
+        dim3 GridDim(static_cast<unsigned int>(ceil((n - tau) / blockWidth)), 
+				     static_cast<unsigned int>(ceil((m - lambda) / blockHeight)), 
+					 1);
 
         // Updates trailing matrix in place : A = Qt @ A
         shared_mem_mmult_in_place_transpose_a<<<GridDim, BlockDim>>>(dev_A_panel_result, dev_panel_Q, dev_A,
@@ -923,7 +931,10 @@ void dev_block_qr(float* A, float* Q, int m, int n, int r) {
         checkCudaErrors(cudaDeviceSynchronize());
 
         dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
+        dim3 GridDim3(
+				static_cast<unsigned int>(ceil((m - lambda) / blockWidth)), 
+				static_cast<unsigned int>(ceil((m) / blockHeight)),
+				1);
         dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> >(dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
 
         checkCudaErrors(cudaDeviceSynchronize());
@@ -987,24 +998,33 @@ void dev_block_qr_wy(float* A, float* Q, int m, int n, int r) {
         dev_wy_transform(dev_A, &dev_panel_Q, m, n, lambda, tau - lambda);
 
         // Update trailing matrix in place : A = Qt @ A
-        float blockWidth = 32.;
-        float blockHeight = 32.;
-        dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
-        shared_mem_mmult_in_place_transpose_a << <GridDim, BlockDim >> > (dev_A_panel_result, dev_panel_Q, dev_A,
-            (m - lambda), (n - tau), (m - lambda), m, n);
+        float blockWidth = 32.f;
+        float blockHeight = 32.f;
+        dim3 BlockDim(
+				static_cast<unsigned int>(blockWidth), 
+				static_cast<unsigned int>(blockHeight), 
+				1);
+        dim3 GridDim(static_cast<unsigned int>(ceil((n - tau) / blockWidth)), 
+					 static_cast<unsigned int>(ceil((m - lambda) / blockHeight)), 
+					 1);
+        shared_mem_mmult_in_place_transpose_a<<<GridDim, BlockDim>>>(
+								dev_A_panel_result, dev_panel_Q, dev_A,
+								(m - lambda), (n - tau), (m - lambda), m, n);
         checkCudaErrors(cudaDeviceSynchronize());
 
         // Copy panel A result to matrix A
         dim3 gridDim2((int)ceil((float)n / TILE_WIDTH), (int)ceil((float)m / TILE_WIDTH), 1);
         dim3 blockDim2(TILE_WIDTH, TILE_WIDTH, 1);
-        dev_cpy_strided_array<float> << <gridDim2, blockDim2 >> > (dev_A, dev_A_panel_result, m, n,
-            (m - lambda), (n - tau), BOTTOM_RIGHT);
+        dev_cpy_strided_array<float><<<gridDim2, blockDim2>>>(
+							dev_A, dev_A_panel_result, m, n,
+							(m - lambda), (n - tau), BOTTOM_RIGHT);
         checkCudaErrors(cudaDeviceSynchronize());
 
         // Update Q matrix with panel Q
         dim3 BlockDim3((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim3(ceil((m - lambda) / blockWidth), ceil((m) / blockHeight), 1);
+        dim3 GridDim3(static_cast<unsigned int>(ceil((m - lambda) / blockWidth)), 
+					  static_cast<unsigned int>(ceil((m) / blockHeight)), 
+					  1);
         dev_apply_qpanel_to_q << <GridDim3, BlockDim3 >> > (dev_Q, dev_panel_Q, dev_Q_result, m, lambda);
         checkCudaErrors(cudaDeviceSynchronize());
 
@@ -1072,7 +1092,9 @@ void dev_mixed_precision_block_qr(float* A, float* Q, int m, int n, int r) {
         float blockWidth = 32.;
         float blockHeight = 32.;
         dim3 BlockDim((int)blockWidth, (int)blockHeight, 1);
-        dim3 GridDim(ceil((n - tau) / blockWidth), ceil((m - lambda) / blockHeight), 1);
+        dim3 GridDim(static_cast<unsigned int>(ceil((n - tau) / blockWidth)), 
+					 static_cast<unsigned int>(ceil((m - lambda) / blockHeight)), 
+					 1);
         shared_mem_mmult_in_place_transpose_a << <GridDim, BlockDim >> > (dev_A_panel_result, dev_panel_Q, dev_A,
             (m - lambda), (n - tau), (m - lambda), m, n);
         checkCudaErrors(cudaDeviceSynchronize());
@@ -1215,7 +1237,7 @@ void test_dev_householder_qr(int m, int n, int r) {
 
     // Allocate device memory for input matrix
     float* dev_A;
-    float* dev_Q; // Matrix Q in A=QR
+    //float* dev_Q; // Matrix Q in A=QR
 
     //checkCudaErrors(cudaMalloc(&dev_Q, m * m * sizeof(float)));
     checkCudaErrors(cudaMalloc(&dev_A, (m+1) * n * sizeof(float)));
@@ -1231,7 +1253,7 @@ void test_dev_householder_qr(int m, int n, int r) {
     dev_householder_qr <<<DimGrid, DimBlock >> > (dev_A, m, n, 0);
     checkCudaErrors(cudaDeviceSynchronize());
     cycles = clock() - cycles;
-    float time_ms = cycles * 1000 / CLOCKS_PER_SEC;
+    float time_ms = static_cast<float>(cycles * static_cast<clock_t>(1000) / (CLOCKS_PER_SEC));
     float flops = h_qr_flops_per_second(time_ms, m, n);
 
     checkCudaErrors(cudaMemcpy(h_A_out, dev_A, (m+1) * n * sizeof(float), cudaMemcpyDeviceToHost));
@@ -1311,19 +1333,18 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     * Test host version of householder QR
     */
 
-    // TASK14 3 alice: iterate over many matrix sizes, & test matrices from Tong
     printf("\nTesting sequential householder QR...\n");
 
     printf("Dimensions of A: %dx%d\n", m, n);
 
 
-    int global_offset = 0;
+    //int global_offset = 0;
 
     float* Q;
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
-    memset(A_out, 0.0, (m + 1) * n * sizeof(float));
+    memset(A_out, 0, (m + 1) * n * sizeof(float));
 
     h_matrix_cpy((float*)A_in, A_out, m, n);
 
@@ -1352,7 +1373,8 @@ void test_h_householder_qr(int m, int n, int r, float* A_in) {
     printf("Sequential householder finished in %.2f ms\n", time_ms);
 
 
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1e8, "cpu_householder");
+    h_write_results_to_log(m, n, time_ms, static_cast<float>(flops / 1E9), 
+            static_cast<float>(backward_error * 1e8), "cpu_householder");
 
     // write results to log file
     free(Q);
@@ -1421,8 +1443,8 @@ void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_
         }
     }
 
-    memset(dev_result_W_Yt, 0.0, W_Yt_size);
-    memset(h_result_W_Yt, 0.0, W_Yt_size);
+    memset(dev_result_W_Yt, 0, W_Yt_size);
+    memset(h_result_W_Yt, 0, W_Yt_size);
 
     float* dev_W;
     float* dev_Y;
@@ -1441,7 +1463,7 @@ void test_dev_wy_compute_Im_sub_W_Yt(int W_Yt_dim, int panel_width, int current_
     dim3 blockDim(TILE_WIDTH, TILE_WIDTH, 1);
 
     // Launch kernel
-    dev_wy_compute_Im_sub_W_Yt << <gridDim, blockDim >> > (dev_WYt, dev_W, dev_Y, panel_width, current_column, W_Yt_dim);
+    dev_wy_compute_Im_sub_W_Yt<<<gridDim, blockDim>>>(dev_WYt, dev_W, dev_Y, panel_width, current_column, W_Yt_dim);
 
     checkCudaErrors(cudaDeviceSynchronize());
 
@@ -1599,7 +1621,7 @@ void test_dev_wy_transform(int m, int n, int panel_width, int global_offset) {
     float* h_result_panel_Q = (float*)malloc(panel_Q_size);
     float* h_dev_result_panel_Q = (float*)malloc(panel_Q_size);
 
-    unsigned seed = time(0);
+    unsigned int seed = static_cast<unsigned int>(time(0));
     srand(seed);
     // initialize matrix A
     for (int row = 0; row < m + 1; row++) {
@@ -1681,7 +1703,8 @@ void test_h_block_qr(int m, int n, int r, float* A_in) {
     float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops_per_second / 1E9, backward_error, "cpu_block");
+    h_write_results_to_log(m, n, time_ms, 
+            static_cast<float>(flops_per_second / 1E9), backward_error, "cpu_block");
 
     printf("Sequential block QR finished in %.2f ms...\n", time_ms);
     //printf("||A - QR||/||A|| = %e\n", backward_error);
@@ -1792,7 +1815,7 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
-    memset(A_out, 0.0, (m + 1) * n * sizeof(float));
+    memset(A_out, 0, (m + 1) * n * sizeof(float));
 
     h_identity_mtx(Q, m, m);
 
@@ -1816,7 +1839,9 @@ void test_dev_block_qr(int m, int n, int r, float * A_in) {
     float error3 = h_lower_trapezoid_error(R, m, n, precision_bits);
 
     // write results to log file
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
+    h_write_results_to_log(m, n, time_ms, 
+            static_cast<float>(flops / 1E9), 
+            static_cast<float>(backward_error * 1E8), "gpu_block");
 
     printf("GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
@@ -1843,7 +1868,7 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
     float* R = (float*)malloc(m * n * sizeof(float));
     float* A_out = (float*)malloc((m + 1) * n * sizeof(float));
 
-    memset(A_out, 0.0, (m + 1) * n * sizeof(float));
+    memset(A_out, 0, (m + 1) * n * sizeof(float));
 
     h_identity_mtx(Q, m, m);
 
@@ -1868,7 +1893,9 @@ void test_dev_mixed_precision_block_qr(int m, int n, int r, float* A_in) {
 
     // write results to log file
 
-    h_write_results_to_log(m, n, time_ms, flops / 1E9, backward_error * 1E8, "gpu_block");
+    h_write_results_to_log(m, n, time_ms, 
+            static_cast<float>(flops / 1E9), 
+            static_cast<float>(backward_error * 1E8), "gpu_block");
 
     printf("Mixed-precision GPU block QR finished...\n");
     printf("Averaged %.2f GFLOPs\n", flops / 1E9);
