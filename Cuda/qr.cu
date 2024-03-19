@@ -506,7 +506,7 @@ void dev_wy_compute_Im_sub_W_Yt(float* dev_W_Yt, float* dev_W, float* dev_Y,
         }
 
         if ((i * TILE_WIDTH + ty < panel_width) && (col < W_Yt_dim)) {
-            bds[tx][ty] = dev_Y[(i * TILE_WIDTH + ty) * W_Yt_dim + col];
+            bds[tx][ty] = dev_Y[col * panel_width + (i * TILE_WIDTH) + ty];
         }
 
         __syncthreads();

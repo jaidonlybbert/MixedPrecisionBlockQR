@@ -13,10 +13,10 @@ Our test data is derived from the Euroc-MAV dataset to emulate using the QR deco
 
 # What this project is
 * 100% free to use for anything
-* A reference for future researchers implementing a parallel QR algorithm (including our references!)
+* A reference for future researchers implementing a parallel QR algorithm
 * A way to test FP16 error performance for the Block QR algorithm using TensorCores
-* A low-level C++ implementation using functional programming
-    * Very few dependencies (just CUDA)
+* A low-level C++ implementation
+    * Very few libraries (just CUDA)
     * Adaptable to alternate parallel processors
 
 # What this project isn't
@@ -27,36 +27,36 @@ Our test data is derived from the Euroc-MAV dataset to emulate using the QR deco
 * Memory optimized
     * We met our performance targets for the research project, but many many things could be done more efficiently, especially with the HtoD memory traffic
 
-# Dependencies (work in progress)
+# Dependencies
 * NVIDIA GPU (compute capability >7.5)
-* CUDA 12.
-* Python
+* CUDA Development Kit 12.1
+* Python 3.11
 * CMAKE
+
+Linux
 * gcc
+* make or Ninja
 
 Windows
 * Microsoft Visual Studio 2022
 
-# Installation (work in progress)
+# Installation
 
-All platforms
 * Clone repo
-* Download test data
+```
+git clone https://github.com/jaidonlybbert/MixedPrecisionBlockQR.git
+```
+* Run CMAKE 
+```
+mkdir build
+cd build
+cmake ..
+cmake --build .
+```
 
-Build for Linux
+Executables can be found in the /build directory. On Windows, a Visual Studio solution (.sln) is built into the build directory. 
 
-* Run CMAKE
-* Execute from shell
-
-Build for Windows
-
-* Run CMAKE
-* Open generated .sln
-* Build and execute in release mode
-
-All platforms
-* Run Python script to generate results
-    * Only after execution finishes and the results log is generated for Python to parse
+After running the tests, the Python script /Cuda/performance/runtime.py can be run to parse the test log results and generate graphs.
 
 # Our Test Results (work in progress)
 ## Error
