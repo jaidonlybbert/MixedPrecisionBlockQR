@@ -6,7 +6,7 @@ add_subdirectory(${CMAKE_HOME_DIRECTORY}/tests)
 
 # Extract input data archive (jacobian test data)
 set(QR_DATA_PATH "${CMAKE_HOME_DIRECTORY}/data")
-set(QR_JACOBIAN_PATH "${QR_DATA_PATH}/jacobians")
+set(QR_JACOBIAN_PATH "${QR_DATA_PATH}/jacobians/jacobians")
 file(ARCHIVE_EXTRACT 
 	INPUT "${QR_DATA_PATH}/okvis_euroc_MH_05_jacobians.tar.gz"
 	DESTINATION "${QR_JACOBIAN_PATH}"
